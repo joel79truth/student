@@ -16,4 +16,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  preview: {
+    allowedHosts: ['student-plp2.onrender.com'], // <-- Add your Render URL here
+    port: 4173, // optional, can leave as is
+  },
 })
