@@ -17,7 +17,7 @@ const app = express();
 console.log("Using Key:", process.env.PAYCHANGU_SECRET_KEY?.substring(0, 8) + "...");
 // Add CORS so your frontend can make requests
 app.use(cors({
-  origin: 'http://localhost:5173', // your frontend URL
+ origin: ['http://localhost:5173', 'https://student-plp2.onrender.com'] // your frontend URL
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true, // only if you use cookies/auth
 }));
