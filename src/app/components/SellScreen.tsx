@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
 import { supabase } from '../../supabase';
+   const API_BASE =
+  import.meta.env.MODE === "production"
+    ? "https://student-plp2.onrender.com"
+    : "http://localhost:5000";
 
 interface SellScreenProps {
   onBack: () => void;
@@ -193,7 +197,9 @@ export function SellScreen({ onBack }: SellScreenProps) {
       };
       localStorage.setItem('pending_upload', JSON.stringify(pendingData));
 
-      const response = await fetch('http://localhost:5000/create-payment', {
+   
+const response = await fetch(`${API_BASE}/create-payment`, {
+ 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -205,12 +211,13 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       const result = await response.json();
 
-      if (response.ok && result.data?.checkout_url) {
-        // Redirect to payment gateway
-        window.location.href = result.data.checkout_url;
-      } else {
-        throw new Error(result.message || 'Payment initialization failed');
-      }
+     if (response.ok && result?.data?.checkout_url) {
+  window.location.href = result.data.checkout_url;
+} else {
+  console.log("PayChangu full response:", result);
+  throw new Error("Payment initialization failed");
+}
+
     } catch (err) {
       console.error('Payment error:', err);
       alert('Payment failed. Please ensure your backend server is running.');

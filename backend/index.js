@@ -32,27 +32,32 @@ app.post('/create-payment', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 const response = await axios.post(
-  'https://api.paychangu.com/payment', // Updated Endpoint
+  'https://api.paychangu.com/payment',
   {
     amount,
     currency: 'MWK',
-    email: 'customer@example.com', // PayChangu often requires an email field
-    first_name: 'Customer',        // and basic name fields for /payment
+    email: 'customer@example.com',
+    first_name: 'Customer',
     last_name: 'User',
     phone,
-    tx_ref: reference,             // PayChangu uses 'tx_ref' instead of 'reference' in this endpoint
-    callback_url: "https://webhook.site/test", // Replace with your actual callback
-   // Change this line in your axios call:
-return_url: "http://localhost:5173/?status=success&tx_ref=" + reference,
+    tx_ref: reference,
+
+    callback_url: "https://webhook.site/test",
+
+    return_url:
+      process.env.NODE_ENV === "production"
+        ? "https://student-plp2.onrender.com/?status=success&tx_ref=" + reference
+        : "http://localhost:5173/?status=success&tx_ref=" + reference
   },
   {
     headers: {
-      'Authorization': `Bearer ${process.env.PAYCHANGU_SECRET_KEY}`,
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
+      Authorization: `Bearer ${process.env.PAYCHANGU_SECRET_KEY}`,
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    }
   }
 );
+
 
 
     res.json(response.data);
