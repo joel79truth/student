@@ -1,9 +1,23 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
-import { supabase } from '../../supabase'; // your Supabase client
+import { supabase } from '../../supabase';
 
 interface SellScreenProps {
   onBack: () => void;
+}
+
+interface FormData {
+  title: string;
+  price: string;
+  category: string;
+  condition: string;
+  campus: string;
+  description: string;
+}
+
+interface PendingUpload {
+  formData: FormData;
+  images: string[];
 }
 
 const CATEGORIES = ['Electronics', 'Textbooks', 'Clothes', 'Dorm Items', 'Furniture', 'Books', 'Other'];
@@ -11,18 +25,18 @@ const CONDITIONS = ['New', 'Like New', 'Very Good', 'Good', 'Fair'];
 const CAMPUSES = ['Main Campus', 'North Campus', 'South Campus', 'Downtown Campus'];
 
 const FREE_UPLOADS_LIMIT = 3;
-const UPLOAD_FEE = 300; // MK300
+const UPLOAD_FEE = 300;
 
 export function SellScreen({ onBack }: SellScreenProps) {
-  const [images, setImages] = useState<string[]>([]); // UI previews
-  const [imageFiles, setImageFiles] = useState<File[]>([]); // Files to upload
+  const [images, setImages] = useState<string[]>([]);
+  const [, setImageFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadCount, setUploadCount] = useState(0);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentPhone, setPaymentPhone] = useState('');
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     title: '',
     price: '',
     category: '',
@@ -31,121 +45,45 @@ export function SellScreen({ onBack }: SellScreenProps) {
     description: ''
   });
 
-  // Check user's upload count on mount
-  useEffect(() => {
-    checkUploadCount();
-  }, []);
+  // Utility function to extract name from email
+  const nameFromEmail = (email: string): string => {
+    const namePart = email.split('@')[0];
+    return namePart
+      .replace(/[._-]+/g, ' ')
+      .split(' ')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  };
 
-  // Check how many times the user has uploaded
-  const checkUploadCount = async () => {
+  // Check how many products the user has uploaded
+  const checkUploadCount = async (): Promise<void> => {
     try {
       const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
       if (!currentUser.email) return;
 
       const sellerName = nameFromEmail(currentUser.email);
-
-      // Count products uploaded by this user
       const { count, error } = await supabase
         .from('products')
         .select('*', { count: 'exact', head: true })
         .eq('seller', sellerName);
 
       if (error) throw error;
-
       setUploadCount(count || 0);
-      console.log(`User has uploaded ${count} products`);
     } catch (err) {
       console.error('Error checking upload count:', err);
     }
   };
 
-  // Handle image selection
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    const fileArray = Array.from(files);
-    setImageFiles(prev => [...prev, ...fileArray].slice(0, 5));
-
-    fileArray.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImages(prev => [...prev, reader.result as string].slice(0, 5));
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  // Remove image and file
-  const removeImage = (index: number) => {
-    setImages(prev => prev.filter((_, i) => i !== index));
-    setImageFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Helper to extract a proper name from email
-  function nameFromEmail(email: string) {
-    const namePart = email.split('@')[0];           // Take before @
-    const cleaned = namePart.replace(/[._-]+/g, ' '); // Replace dots/underscores/hyphens with spaces
-    return cleaned
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1)) // Capitalize each word
-      .join(' ');
-  }
-
-  // Handle payment process
-  const handlePayment = async () => {
-    if (!paymentPhone || paymentPhone.length < 9) {
-      alert('Please enter a valid phone number');
+  // Upload product to database
+  const performUpload = async (): Promise<void> => {
+    // Validation
+    if (images.length === 0) {
+      alert('Please add at least one image.');
       return;
     }
 
-    setIsProcessingPayment(true);
-
-    try {
-      // TODO: Integrate with actual payment gateway
-      // For Malawi, you might use:
-      // - Paychangu (supports Airtel Money, TNM Mpamba)
-      // - DPO PayGate
-      // - TNM Mpamba API
-      // - Airtel Money API
-
-      // Mock payment process - Replace with actual payment gateway
-      console.log(`Processing payment of MK${UPLOAD_FEE} from ${paymentPhone}`);
-
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Record payment in database
-      const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-      const { error: paymentError } = await supabase.from('payments').insert([{
-        user_email: currentUser.email,
-        amount: UPLOAD_FEE,
-        phone_number: paymentPhone,
-        payment_type: 'upload_fee',
-        status: 'completed',
-        created_at: new Date().toISOString()
-      }]);
-
-      if (paymentError) throw paymentError;
-
-      alert('Payment successful! You can now upload your item.');
-      setShowPaymentModal(false);
-      setPaymentPhone('');
-      
-      // Proceed with upload after successful payment
-      await performUpload();
-    } catch (err) {
-      console.error('Payment error:', err);
-      alert('Payment failed. Please try again.');
-    } finally {
-      setIsProcessingPayment(false);
-    }
-  };
-
-  // Perform the actual upload
-  const performUpload = async () => {
-    if (imageFiles.length === 0) {
-      alert('Please add at least one image.');
+    if (!formData.title || !formData.price || !formData.category || !formData.condition || !formData.campus) {
+      alert('Please fill in all required fields.');
       return;
     }
 
@@ -154,14 +92,28 @@ export function SellScreen({ onBack }: SellScreenProps) {
     try {
       const uploadedUrls: string[] = [];
 
-      for (const file of imageFiles) {
-        const filePath = `products/${Date.now()}-${file.name}`;
+      // Upload images to Supabase Storage
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        
+        // Convert base64 to Blob
+        const blob = await fetch(image).then(res => res.blob());
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
+        const filePath = `products/${fileName}`;
+        
         const { error: uploadError } = await supabase.storage
           .from('product-images')
-          .upload(filePath, file);
+          .upload(filePath, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
 
-        if (uploadError) throw uploadError;
+        if (uploadError) {
+          console.error('Upload error:', uploadError);
+          throw uploadError;
+        }
 
+        // Get public URL
         const { data } = supabase.storage
           .from('product-images')
           .getPublicUrl(filePath);
@@ -169,59 +121,184 @@ export function SellScreen({ onBack }: SellScreenProps) {
         uploadedUrls.push(data.publicUrl);
       }
 
-      // Get the user email from localStorage and convert to proper name
+      // Get seller info
       const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
       const sellerName = currentUser.email ? nameFromEmail(currentUser.email) : 'Anonymous';
 
-      // Insert into products table
-      const { error: dbError } = await supabase.from('products').insert([{
-        ...formData,
-        price: Number(formData.price),
-        images: uploadedUrls,
-        seller: sellerName,
-        created_at: new Date().toISOString()
-      }]);
+      // Insert product into database
+      const { error: dbError } = await supabase
+        .from('products')
+        .insert([{
+          title: formData.title,
+          price: parseFloat(formData.price),
+          category: formData.category,
+          condition: formData.condition,
+          campus: formData.campus,
+          description: formData.description,
+          images: uploadedUrls,
+          seller: sellerName,
+          created_at: new Date().toISOString()
+        }]);
 
-      if (dbError) throw dbError;
+      if (dbError) {
+        console.error('Database error:', dbError);
+        throw dbError;
+      }
 
       alert('Product listed successfully!');
       
       // Reset form
-      setFormData({
-        title: '',
-        price: '',
-        category: '',
-        condition: '',
-        campus: '',
-        description: ''
+      setFormData({ 
+        title: '', 
+        price: '', 
+        category: '', 
+        condition: '', 
+        campus: '', 
+        description: '' 
       });
       setImages([]);
       setImageFiles([]);
+      localStorage.removeItem('pending_upload');
       
-      // Update upload count
-      setUploadCount(prev => prev + 1);
+      // Refresh upload count
+      await checkUploadCount();
       
+      // Go back to previous screen
       onBack();
+
     } catch (err) {
       console.error('Error uploading product:', err);
-      alert('Error uploading product. Check console.');
+      alert('Error uploading product. Please try again.');
     } finally {
       setIsUploading(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Handle payment processing
+  const handlePayment = async (): Promise<void> => {
+    if (!paymentPhone || paymentPhone.length < 9) {
+      alert('Please enter a valid phone number');
+      return;
+    }
+
+    setIsProcessingPayment(true);
+
+    try {
+      const reference = `UPLOADFEE-${Date.now()}`;
+
+      // Save form data and images to localStorage before redirect
+      const pendingData: PendingUpload = {
+        formData,
+        images // base64 strings
+      };
+      localStorage.setItem('pending_upload', JSON.stringify(pendingData));
+
+      const response = await fetch('http://localhost:5000/create-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: UPLOAD_FEE,
+          phone: paymentPhone,
+          reference
+        })
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.data?.checkout_url) {
+        // Redirect to payment gateway
+        window.location.href = result.data.checkout_url;
+      } else {
+        throw new Error(result.message || 'Payment initialization failed');
+      }
+    } catch (err) {
+      console.error('Payment error:', err);
+      alert('Payment failed. Please ensure your backend server is running.');
+      setIsProcessingPayment(false);
+    }
+  };
+
+  // Handle image file selection
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const fileArray = Array.from(files);
+    const remainingSlots = 5 - images.length;
+    const filesToAdd = fileArray.slice(0, remainingSlots);
+
+    // Add to imageFiles state
+    setImageFiles(prev => [...prev, ...filesToAdd]);
+
+    // Convert to base64 and add to images state
+    filesToAdd.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImages(prev => {
+          if (prev.length < 5) {
+            return [...prev, reader.result as string];
+          }
+          return prev;
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Remove image
+  const removeImage = (index: number): void => {
+    setImages(prev => prev.filter((_, i) => i !== index));
+    setImageFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
 
-    // Check if user needs to pay
+    // Check if payment is required
     if (uploadCount >= FREE_UPLOADS_LIMIT) {
       setShowPaymentModal(true);
       return;
     }
 
-    // Free upload available
+    // Proceed with upload
     await performUpload();
   };
+
+  // Check for payment success redirect on mount
+  useEffect(() => {
+    // Check upload count
+    checkUploadCount();
+
+    // Check for payment success redirect
+    const queryParams = new URLSearchParams(window.location.search);
+    const status = queryParams.get('status');
+    
+    if (status === 'success') {
+      const savedData = localStorage.getItem('pending_upload');
+      if (savedData) {
+        try {
+          const { formData: savedForm, images: savedImages }: PendingUpload = JSON.parse(savedData);
+          
+          // Restore form data and images
+          setFormData(savedForm);
+          setImages(savedImages);
+          
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+          // Show success message
+          alert('Payment successful! Your listing will now be uploaded.');
+          
+          // Automatically upload
+          performUpload();
+        } catch (err) {
+          console.error('Error restoring saved data:', err);
+          localStorage.removeItem('pending_upload');
+        }
+      }
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const remainingFreeUploads = Math.max(0, FREE_UPLOADS_LIMIT - uploadCount);
   const needsPayment = uploadCount >= FREE_UPLOADS_LIMIT;
@@ -231,7 +308,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
       {/* Header */}
       <div className="bg-card border-b border-border p-4 flex items-center justify-between">
         <div className="flex items-center">
-          <button onClick={onBack} className="p-2 hover:bg-accent rounded-lg -ml-2">
+          <button 
+            onClick={onBack} 
+            className="p-2 hover:bg-accent rounded-lg -ml-2"
+            type="button"
+          >
             <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="text-xl ml-4">List an Item</h1>
@@ -262,7 +343,9 @@ export function SellScreen({ onBack }: SellScreenProps) {
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4">
         {/* Image Upload */}
         <div className="mb-6">
-          <label className="block text-sm mb-1">{images.length}/5 Photos Selected</label>
+          <label className="block text-sm mb-1 font-medium">
+            {images.length}/5 Photos Selected
+          </label>
           <div className="grid grid-cols-3 gap-2">
             {images.map((image, index) => (
               <div key={index} className="relative aspect-square">
@@ -274,7 +357,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
                 <button
                   type="button"
                   onClick={() => removeImage(index)}
-                  className="absolute top-1 right-1 p-1 bg-destructive rounded-full"
+                  className="absolute top-1 right-1 p-1 bg-destructive rounded-full hover:opacity-80 transition-opacity"
                 >
                   <X className="w-4 h-4 text-destructive-foreground" />
                 </button>
@@ -299,7 +382,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         {/* Title */}
         <div className="mb-4">
-          <label className="block text-sm mb-2">Title *</label>
+          <label className="block text-sm mb-2 font-medium">Title *</label>
           <input
             type="text"
             value={formData.title}
@@ -312,10 +395,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         {/* Price */}
         <div className="mb-4">
-          <label className="block text-sm mb-2">Price (MK) *</label>
+          <label className="block text-sm mb-2 font-medium">Price (MK) *</label>
           <input
             type="number"
             step="0.01"
+            min="0"
             value={formData.price}
             onChange={(e) => setFormData({ ...formData, price: e.target.value })}
             className="w-full p-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary"
@@ -326,7 +410,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         {/* Category */}
         <div className="mb-4">
-          <label className="block text-sm mb-2">Category *</label>
+          <label className="block text-sm mb-2 font-medium">Category *</label>
           <select
             value={formData.category}
             onChange={(e) => setFormData({ ...formData, category: e.target.value })}
@@ -342,7 +426,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         {/* Condition */}
         <div className="mb-4">
-          <label className="block text-sm mb-2">Condition *</label>
+          <label className="block text-sm mb-2 font-medium">Condition *</label>
           <select
             value={formData.condition}
             onChange={(e) => setFormData({ ...formData, condition: e.target.value })}
@@ -358,7 +442,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         {/* Campus */}
         <div className="mb-4">
-          <label className="block text-sm mb-2">Campus *</label>
+          <label className="block text-sm mb-2 font-medium">Campus *</label>
           <select
             value={formData.campus}
             onChange={(e) => setFormData({ ...formData, campus: e.target.value })}
@@ -374,7 +458,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         {/* Description */}
         <div className="mb-4">
-          <label className="block text-sm mb-2">Description</label>
+          <label className="block text-sm mb-2 font-medium">Description</label>
           <textarea
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -387,7 +471,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
         <button
           type="submit"
           disabled={isUploading}
-          className={`w-full p-3 bg-primary text-primary-foreground rounded-lg transition-all mb-4 flex items-center justify-center gap-2 ${
+          className={`w-full p-3 bg-primary text-primary-foreground rounded-lg transition-all mb-4 flex items-center justify-center gap-2 font-medium ${
             isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'
           }`}
         >
@@ -403,6 +487,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-semibold">Payment Required</h2>
               <button
+                type="button"
                 onClick={() => setShowPaymentModal(false)}
                 className="p-2 hover:bg-accent rounded-lg transition-colors"
                 disabled={isProcessingPayment}
@@ -435,6 +520,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
             <div className="space-y-3">
               <button
+                type="button"
                 onClick={handlePayment}
                 disabled={isProcessingPayment || !paymentPhone}
                 className="w-full p-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed font-medium"
@@ -450,6 +536,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
               </button>
 
               <button
+                type="button"
                 onClick={() => setShowPaymentModal(false)}
                 disabled={isProcessingPayment}
                 className="w-full p-3 border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"

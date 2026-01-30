@@ -109,7 +109,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       {/* Header */}
       <div className="flex flex-col items-center mt-12 mb-8">
         <ShoppingBag className="w-16 h-16 text-primary" strokeWidth={1.5} />
-        <h1 className="mt-4 text-3xl">Student Market</h1>
+        <h1 className="mt-4 text-3xl">Cosemetics</h1>
         <p className="text-muted-foreground mt-2">
           Your campus marketplace
         </p>

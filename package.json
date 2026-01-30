@@ -4,10 +4,12 @@
   "version": "0.0.1",
   "type": "module",
    "scripts": {
-  "dev": "vite",
+  "dev": "vite",                   
+  "dev:server": "nodemon server.js", 
   "build": "vite build",
-  "start": "vite preview --port $PORT --host"
+  "start": "node server.js"         
 },
+
   "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",

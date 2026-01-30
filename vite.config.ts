@@ -4,20 +4,19 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
+  // This tells Vite to look for the .env file in the backend folder
+  envDir: './backend', 
   plugins: [
-    // The React and Tailwind plugins are both required for Make, even if
-    // Tailwind is not being actively used – do not remove them
     react(),
     tailwindcss(),
   ],
   resolve: {
     alias: {
-      // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
     },
   },
   preview: {
-    allowedHosts: ['student-plp2.onrender.com'], // <-- Add your Render URL here
-    port: 4173, // optional, can leave as is
+    allowedHosts: ['student-plp2.onrender.com'],
+    port: 4173,
   },
 })
