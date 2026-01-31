@@ -275,39 +275,37 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
   // Check for payment success redirect on mount
   useEffect(() => {
-    // Check upload count
-    checkUploadCount();
+  checkUploadCount();
 
-    // Check for payment success redirect
-    const queryParams = new URLSearchParams(window.location.search);
-    const status = queryParams.get('status');
-    
-    if (status === 'success') {
-      const savedData = localStorage.getItem('pending_upload');
-      if (savedData) {
-        try {
-          const { formData: savedForm, images: savedImages }: PendingUpload = JSON.parse(savedData);
-          
-          // Restore form data and images
-          setFormData(savedForm);
-          setImages(savedImages);
-          
-          // Clean up URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-          
-          // Show success message
-          alert('Payment successful! Your listing will now be uploaded.');
-          
-          // Automatically upload
+  const queryParams = new URLSearchParams(window.location.search);
+  const status = queryParams.get('status');
+  
+  if (status === 'success') {
+    const savedData = localStorage.getItem('pending_upload');
+    if (savedData) {
+      try {
+        const { formData: savedForm, images: savedImages } = JSON.parse(savedData);
+        
+        // 1. Restore the data to state so the user sees it
+        setFormData(savedForm);
+        setImages(savedImages);
+        
+        // 2. Clear URL parameters so a refresh doesn't trigger this again
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // 3. IMPORTANT: Trigger the upload automatically
+        // We use a small timeout to ensure state is set before performUpload runs
+        setTimeout(() => {
+          console.log("Payment verified. Auto-uploading listing...");
           performUpload();
-        } catch (err) {
-          console.error('Error restoring saved data:', err);
-          localStorage.removeItem('pending_upload');
-        }
+        }, 500);
+
+      } catch (err) {
+        console.error('Error during auto-upload:', err);
       }
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
+  }
+}, []);
   const remainingFreeUploads = Math.max(0, FREE_UPLOADS_LIMIT - uploadCount);
   const needsPayment = uploadCount >= FREE_UPLOADS_LIMIT;
 
