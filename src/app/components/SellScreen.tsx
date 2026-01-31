@@ -179,51 +179,52 @@ export function SellScreen({ onBack }: SellScreenProps) {
   };
 
   // Handle payment processing
-  const handlePayment = async (): Promise<void> => {
-    if (!paymentPhone || paymentPhone.length < 9) {
-      alert('Please enter a valid phone number');
-      return;
+ const handlePayment = async (): Promise<void> => {
+  if (!paymentPhone || paymentPhone.length < 9) {
+    alert('Please enter a valid phone number');
+    return;
+  }
+
+  setIsProcessingPayment(true);
+
+  try {
+    const reference = `UPLOADFEE-${Date.now()}`;
+    const pendingData: PendingUpload = { formData, images };
+    localStorage.setItem('pending_upload', JSON.stringify(pendingData));
+
+    console.log("Calling API at:", `${API_BASE}/create-payment`);
+
+    const response = await fetch(`${API_BASE}/create-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: UPLOAD_FEE,
+        phone: paymentPhone,
+        reference
+      })
+    });
+
+    // CHECK IF RESPONSE IS VALID BEFORE PARSING JSON
+    if (!response.ok) {
+      const errorText = await response.text(); // Get the HTML/Text error from server
+      console.error("Server Error Response:", errorText);
+      throw new Error(`Server Error (${response.status}): ${errorText.substring(0, 100)}`);
     }
 
-    setIsProcessingPayment(true);
+    const result = await response.json();
 
-    try {
-      const reference = `UPLOADFEE-${Date.now()}`;
-
-      // Save form data and images to localStorage before redirect
-      const pendingData: PendingUpload = {
-        formData,
-        images // base64 strings
-      };
-      localStorage.setItem('pending_upload', JSON.stringify(pendingData));
-
-   
-const response = await fetch(`${API_BASE}/create-payment`, {
- 
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: UPLOAD_FEE,
-          phone: paymentPhone,
-          reference
-        })
-      });
-
-      const result = await response.json();
-
-     if (response.ok && result?.data?.checkout_url) {
-  window.location.href = result.data.checkout_url;
-} else {
-  console.log("PayChangu full response:", result);
-  throw new Error("Payment initialization failed");
-}
-
-    } catch (err) {
-      console.error('Payment error:', err);
-      alert('Payment failed. Please ensure your backend server is running.');
-      setIsProcessingPayment(false);
+    if (result?.status === 'success' && result?.data?.checkout_url) {
+      window.location.href = result.data.checkout_url;
+    } else {
+      throw new Error(result.message || "Payment initialization failed");
     }
-  };
+
+  } catch (err: any) {
+    console.error('Full Payment Error Object:', err);
+    alert(`Payment Error: ${err.message}`);
+    setIsProcessingPayment(false);
+  }
+};
 
   // Handle image file selection
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>): void => {
