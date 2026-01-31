@@ -48,7 +48,7 @@ app.post('/create-payment', async (req, res) => {
         last_name: 'User',
         phone,
         tx_ref: reference,
-        callback_url: "https://webhook.site/test", 
+         
         return_url: returnUrl, 
       },
       {
