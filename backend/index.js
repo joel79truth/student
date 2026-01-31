@@ -47,7 +47,7 @@ app.post('/create-payment', async (req, res) => {
         tx_ref: reference,
         callback_url: "https://webhook.site/test",
         return_url: process.env.NODE_ENV === "production"
-            ? `https://student-1-5tjj.onrender.com/?status=success&tx_ref=${reference}` // Use your FRONTEND URL here
+            ? `https://student-plp2.onrender.com/?status=success&tx_ref=${reference}` // Use your FRONTEND URL here
             : `http://localhost:5173/?status=success&tx_ref=${reference}`
       },
       {
