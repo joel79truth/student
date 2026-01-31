@@ -3,7 +3,7 @@ import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
 import { supabase } from '../../supabase';
    const API_BASE =
   import.meta.env.MODE === "production"
-    ? "https://student-plp2.onrender.com"
+    ? "https://student-1-5tjj.onrender.com"
     : "http://localhost:5000";
 
 interface SellScreenProps {
