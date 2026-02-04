@@ -5,6 +5,9 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 
+
+
+
 // --------------------
 // Setup
 // --------------------
@@ -16,6 +19,7 @@ dotenv.config({ path: path.resolve(__dirname, "./.env") });
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // --------------------
 // Health Check
@@ -37,7 +41,13 @@ app.post("/paychangu/callback", (req, res) => {
 
   res.sendStatus(200);
 });
-
+// --------------------
+// PayChangu Callback (GET)
+// --------------------
+app.get("/paychangu/callback", (req, res) => {
+  console.log("PayChangu GET Callback:", req.query);
+  return res.status(200).send("Callback received");
+});
 // --------------------
 // Create Payment
 // --------------------
@@ -52,18 +62,13 @@ app.post("/create-payment", async (req, res) => {
     // --------------------
     // Environment URLs
     // --------------------
-    const frontendUrl =
-      process.env.NODE_ENV === "production"
-        ? "https://student-plp2.onrender.com" // your frontend
-        : "http://localhost:5173";
+    const frontendUrl = "https://student-plp2.onrender.com";
+    const backendUrl = "https://student-1-5tjj.onrender.com";
 
-    const backendUrl =
-      process.env.NODE_ENV === "production"
-        ? "https://student-1-5tjj.onrender.com" // your backend
-        : "http://localhost:5000";
 
+   
    const returnUrl = `${frontendUrl}/sell?status=success&tx_ref=${reference}`;
-
+console.log("Return URL:", returnUrl);
     const callbackUrl = `${backendUrl}/paychangu/callback`;
 
     console.log(
