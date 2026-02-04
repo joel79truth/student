@@ -1,25 +1,6 @@
-// chatService.ts
-
-import {
-  collection,
-  doc,
-  getDoc,
-  setDoc,
-  addDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  updateDoc,
-  deleteDoc,
-  arrayUnion,
-  serverTimestamp,
-  Timestamp,
-  DocumentData
-} from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "./supabase";
 
 /* ================= TYPES ================= */
-
 export interface Message {
   id: string;
   text: string;
@@ -37,207 +18,234 @@ export interface Chat {
   lastMessageAt: Date;
 }
 
-/* ================================================= */
-/* =============== GET OR CREATE CHAT ============== */
-/* ================================================= */
-
+/* ================= GET OR CREATE CHAT ================= */
 export async function getOrCreateChat(
   buyerId: string,
   sellerId: string,
   productId: string,
   productTitle: string
 ): Promise<string> {
-
   const users = [buyerId, sellerId].sort();
-  const chatKey = `${users[0]}_${users[1]}_${productId}`;
-  const chatRef = doc(db, "chats", chatKey);
 
-  const snap = await getDoc(chatRef);
-  if (snap.exists()) return snap.id;
+  const { data, error } = await supabase
+    .from("chats")
+    .select("id")
+    .contains("users", users)
+    .eq("product_id", productId)
+    .maybeSingle();
 
-  await setDoc(chatRef, {
-    users,
-    chatKey,
-    productId,
-    productTitle,
-    lastMessage: "",
-    lastMessageAt: serverTimestamp()
-  });
+  if (error) console.error("Error fetching chat:", error.message);
+  if (data) return data.id;
 
-  return chatRef.id;
+  const { data: newChat, error: createError } = await supabase
+    .from("chats")
+    .insert([{ 
+        users, 
+        product_id: productId, 
+        product_title: productTitle,
+        last_message_at: new Date().toISOString() 
+    }])
+    .select()
+    .single();
+
+  if (createError) {
+    console.error("Error creating chat:", createError.message);
+    throw createError;
+  }
+  return newChat.id;
 }
 
-/* ================================================= */
-/* ================= SEND MESSAGE ================== */
-/* ================================================= */
+/* ================= SEND MESSAGE ================= */
+export async function sendMessage(chatId: string, senderId: string, text: string) {
+  // 1. Fetch the chat to find out who the participants are
+  const { data: chat, error: chatError } = await supabase
+    .from("chats")
+    .select("users")
+    .eq("id", chatId)
+    .single();
 
-export async function sendMessage(
-  chatId: string,
-  text: string,
-  senderId: string
-) {
-  const messagesRef = collection(db, "chats", chatId, "messages");
-
-  await addDoc(messagesRef, {
-    text,
-    senderId,
-    createdAt: serverTimestamp(),
-    readBy: [senderId]
-  });
-
-  // Update chat metadata
-  await updateDoc(doc(db, "chats", chatId), {
-    lastMessage: text,
-    lastMessageAt: serverTimestamp()
-  });
-}
-
-/* ================================================= */
-/* ================ LISTEN MESSAGES ================= */
-/* ================================================= */
-
-export function listenToMessages(
-  chatId: string | null | undefined,
-  callback: (msgs: Message[]) => void
-) {
-  if (!chatId) {
-    callback([]);
-    return () => {};
+  if (chatError || !chat) {
+    console.error("Could not find chat participants:", chatError?.message);
+    return;
   }
 
-  const q = query(
-    collection(db, "chats", chatId, "messages"),
-    orderBy("createdAt", "asc")
-  );
+  // 2. Find the receiver (the ID in the array that isn't the sender)
+  const receiverId = chat.users.find((id: string) => id !== senderId);
 
-  return onSnapshot(
-    q,
-    snap => {
-      const msgs: Message[] = snap.docs.map(d => {
-        const data = d.data() as DocumentData;
+  // 3. Insert the message with BOTH sender and receiver IDs
+  const { error: msgError } = await supabase
+    .from("chat_messages")
+    .insert([{ 
+        chat_id: chatId, 
+        sender_id: senderId, 
+        receiver_id: receiverId, // This is now populated
+        text, 
+        read_by: [senderId] 
+    }]);
 
-        const createdAt = data.createdAt instanceof Timestamp
-          ? data.createdAt.toDate()
-          : new Date(); // fallback
+  if (msgError) {
+    console.error("Error sending message:", msgError.message);
+    throw msgError;
+  }
 
-        return {
-          id: d.id,
-          text: data.text ?? "",
-          senderId: data.senderId ?? "",
-          createdAt,
-          readBy: data.readBy ?? []
+  // 4. Update the main chat list entry
+  const { error: updateError } = await supabase
+    .from("chats")
+    .update({ 
+        last_message: text, 
+        last_message_at: new Date().toISOString() 
+    })
+    .eq("id", chatId);
+
+  if (updateError) console.error("Error updating chat header:", updateError.message);
+}
+
+/* ================= LISTEN MESSAGES ================= */
+export function listenToMessages(chatId: string | null, callback: (msgs: Message[]) => void) {
+  if (!chatId) return () => {};
+
+  let currentMessages: Message[] = [];
+
+  // 1. Initial Fetch of existing history
+  supabase
+    .from("chat_messages")
+    .select("*")
+    .eq("chat_id", chatId)
+    .order("created_at", { ascending: true })
+    .then(({ data, error }) => {
+      if (error) {
+        console.error("Initial fetch error:", error.message);
+        return;
+      }
+      if (data) {
+        currentMessages = data.map(m => ({
+          id: m.id,
+          text: m.text,
+          senderId: m.sender_id,
+          createdAt: new Date(m.created_at),
+          readBy: m.read_by || []
+        }));
+        callback(currentMessages);
+      }
+    });
+
+  // 2. Realtime Listener for new incoming messages
+  const channel = supabase
+    .channel(`chat_messages:${chatId}`)
+    .on(
+      'postgres_changes',
+      { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'chat_messages', 
+        filter: `chat_id=eq.${chatId}` 
+      },
+      (payload) => {
+        const newMessage = payload.new;
+        
+        const formattedMsg: Message = {
+          id: newMessage.id,
+          text: newMessage.text,
+          senderId: newMessage.sender_id,
+          createdAt: new Date(newMessage.created_at),
+          readBy: newMessage.read_by || []
         };
-      });
 
-      callback(msgs);
-    },
-    error => {
-      console.error("listenToMessages:", error);
-      callback([]);
-    }
-  );
+        // Append only the new message to the local list and trigger the UI update
+        currentMessages = [...currentMessages, formattedMsg];
+        callback(currentMessages);
+      }
+    )
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
 }
-
-/* ================================================= */
-/* ================ USER CHAT LIST ================= */
-/* ================================================= */
-
-export function listenToUserChats(
-  uid: string,
-  callback: (chats: Chat[]) => void
-) {
-  const q = query(
-    collection(db, "chats"),
-    orderBy("lastMessageAt", "desc")
-  );
-
-  return onSnapshot(
-    q,
-    snap => {
-      const chats: Chat[] = snap.docs
-        .map(d => {
-          const data = d.data() as DocumentData;
-          if (!data.users?.includes(uid)) return null;
-
-          const lastMessageAt = data.lastMessageAt instanceof Timestamp
-            ? data.lastMessageAt.toDate()
-            : new Date();
-
-          return {
+/* ================= USER CHAT LIST ================= */
+export function listenToUserChats(uid: string, callback: (chats: Chat[]) => void) {
+  const fetchChats = () => {
+    supabase
+      .from("chats")
+      .select("*")
+      .contains("users", [uid])
+      .order("last_message_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (error) console.error("Fetch chats error:", error.message);
+        if (data) {
+          callback(data.map(d => ({
             id: d.id,
-            users: data.users ?? [],
-            productId: data.productId ?? "",
-            productTitle: data.productTitle ?? "",
-            lastMessage: data.lastMessage ?? "",
-            lastMessageAt
-          } as Chat;
-        })
-        .filter(Boolean) as Chat[];
+            users: d.users,
+            productId: d.product_id,
+            productTitle: d.product_title,
+            lastMessage: d.last_message,
+            lastMessageAt: new Date(d.last_message_at)
+          })));
+        }
+      });
+  };
 
-      callback(chats);
-    },
-    error => {
-      console.error("listenToUserChats:", error);
-      callback([]);
-    }
-  );
+  fetchChats();
+
+  const channel = supabase
+    .channel('user_chats')
+    .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'chats' 
+    }, () => {
+        fetchChats(); // Re-fetch list when any chat updates
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
 }
 
-/* ================================================= */
-/* ================= READ RECEIPT ================== */
-/* ================================================= */
+/* ================= TYPING STATUS (Broadcast) ================= */
+export function setTyping(chatId: string, uid: string, typing: boolean) {
+  const channel = supabase.channel(`typing:${chatId}`);
+  channel.subscribe(status => {
+    if (status === 'SUBSCRIBED') {
+      channel.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { uid, typing }
+      });
+    }
+  });
+}
 
+export function listenToTyping(chatId: string, currentUserId: string, callback: (isTyping: boolean) => void) {
+  const channel = supabase.channel(`typing:${chatId}`)
+    .on('broadcast', { event: 'typing' }, ({ payload }) => {
+      if (payload.uid !== currentUserId) {
+        callback(payload.typing);
+      }
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+}
+
+/* ================= READ RECEIPT ================== */
 export async function markAsRead(
-  chatId: string,
+  _chatId: string, // Prefixed with underscore to ignore unused warning
   messageId: string,
   uid: string
 ) {
-  const ref = doc(db, "chats", chatId, "messages", messageId);
+  const { data, error: fetchError } = await supabase
+    .from("chat_messages")
+    .select("read_by")
+    .eq("id", messageId)
+    .single();
 
-  await updateDoc(ref, {
-    readBy: arrayUnion(uid)
-  });
-}
+  if (fetchError || !data) return;
 
-/* ================================================= */
-/* ================= TYPING STATUS ================= */
-/* ================================================= */
+  if (!data.read_by.includes(uid)) {
+    const updatedReadBy = [...data.read_by, uid];
+    const { error: updateError } = await supabase
+      .from("chat_messages")
+      .update({ read_by: updatedReadBy })
+      .eq("id", messageId);
 
-export async function setTyping(
-  chatId: string,
-  uid: string,
-  typing: boolean
-) {
-  const ref = doc(db, "chats", chatId, "typing", uid);
-
-  if (typing) {
-    await setDoc(ref, {
-      typing: true,
-      timestamp: serverTimestamp()
-    });
-  } else {
-    await deleteDoc(ref);
+    if (updateError) console.error("Read receipt error:", updateError.message);
   }
-}
-
-export function listenToTyping(
-  chatId: string,
-  currentUserId: string,
-  callback: (isTyping: boolean) => void
-) {
-  const ref = collection(db, "chats", chatId, "typing");
-
-  return onSnapshot(
-    ref,
-    snap => {
-      const otherUserTyping = snap.docs.some(
-        d => d.id !== currentUserId && d.data().typing === true
-      );
-      callback(otherUserTyping);
-    },
-    error => {
-      console.error("listenToTyping:", error);
-      callback(false);
-    }
-  );
 }

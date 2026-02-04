@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Search, Filter, MapPin } from 'lucide-react';
 import { ProductCard } from '../components/ProductCard';
-import { ProductDetail } from '../components/ProductDetail';
+import ProductDetail from "../components/ProductDetail";
 import { supabase } from '../../supabase'; // your Supabase client
+import { auth } from "../../firebase";
+import { getOrCreateChat } from "../../lib/chatService";
 
-export function HomeScreen() {
+interface HomeScreenProps {
+  onOpenChat: () => void; // callback from App.tsx
+}
+
+export function HomeScreen({ onOpenChat }: HomeScreenProps) {
   const [products, setProducts] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -15,11 +21,8 @@ export function HomeScreen() {
   const categories = ['All', 'Electronics', 'Textbooks', 'Clothes', 'Dorm Items', 'Furniture', 'Books', 'Other'];
 
   useEffect(() => {
-    // Load saved items from localStorage
     const saved = localStorage.getItem('savedItems');
     if (saved) setSavedItems(JSON.parse(saved));
-
-    // Fetch products from Supabase
     fetchProducts();
   }, []);
 
@@ -36,10 +39,9 @@ export function HomeScreen() {
         return;
       }
 
-      // Map image arrays to a primary image for UI
       const formatted = data.map((item: any) => ({
         ...item,
-        image: item.images?.[0] || '', // take first image as thumbnail
+        image: item.images?.[0] || '',
       }));
 
       setProducts(formatted);
@@ -59,6 +61,20 @@ export function HomeScreen() {
     localStorage.setItem('savedItems', JSON.stringify(newSaved));
   };
 
+  // ------------------ HANDLE CHAT ------------------
+  const handleChat = async (product: any) => {
+    const user = auth.currentUser;
+    if (!user) {
+      alert("You must be logged in to chat with the seller.");
+      return;
+    }
+
+    await getOrCreateChat(user.uid, product.seller, product.id, product.title);
+
+    // Instead of navigate(), just call the callback
+    onOpenChat();
+  };
+
   const filteredProducts = products.filter(product => {
     const matchesSearch = product.title.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
@@ -72,6 +88,7 @@ export function HomeScreen() {
         isSaved={savedItems.includes(selectedProduct.id)}
         onToggleSave={() => toggleSave(selectedProduct.id)}
         onBack={() => setSelectedProduct(null)}
+        onOpenChat={onOpenChat} // pass callback down
       />
     );
   }
@@ -141,6 +158,8 @@ export function HomeScreen() {
                 isSaved={savedItems.includes(product.id)}
                 onToggleSave={() => toggleSave(product.id)}
                 onClick={() => setSelectedProduct(product)}
+                onBuy={() => console.log("Buying", product.title)}
+                onChatWithSeller={() => handleChat(product)} // ✅ uses callback
               />
             ))}
           </div>

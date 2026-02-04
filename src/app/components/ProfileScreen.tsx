@@ -39,6 +39,14 @@ export function ProfileScreen({ onLogout, onBack }: ProfileScreenProps) {
     }
   };
 
+  function onToggleSave(_id: any): void {
+    throw new Error('Function not implemented.');
+  }
+
+  function setSelectedProduct(_product: any): void {
+    throw new Error('Function not implemented.');
+  }
+
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
@@ -128,13 +136,17 @@ export function ProfileScreen({ onLogout, onBack }: ProfileScreenProps) {
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 {myProducts.map((product) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
-                    isSaved={false}
-                    onToggleSave={() => {}}
-                    onClick={() => {}}
-                  />
+                <ProductCard
+  key={product.id}
+  product={product}
+  isSaved={savedItems.includes(product.id)}
+  onToggleSave={() => onToggleSave(product.id)}
+  onClick={() => setSelectedProduct(product)}
+  onBuy={() => console.log("Buying", product.title)}
+  // Add this line:
+  onChatWithSeller={(product) => console.log("Chatting about", product.title)}
+/>
+ 
                 ))}
               </div>
             )}
