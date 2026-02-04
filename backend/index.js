@@ -62,7 +62,8 @@ app.post("/create-payment", async (req, res) => {
         ? "https://student-1-5tjj.onrender.com" // your backend
         : "http://localhost:5000";
 
-    const returnUrl = `${frontendUrl}?status=success&redirect=sell&tx_ref=${reference}`;
+   const returnUrl = `${frontendUrl}/sell?status=success&tx_ref=${reference}`;
+
     const callbackUrl = `${backendUrl}/paychangu/callback`;
 
     console.log(
@@ -75,7 +76,7 @@ app.post("/create-payment", async (req, res) => {
     const response = await axios.post(
       "https://api.paychangu.com/payment",
       {
-        amount,
+       amount: Number(amount),
         currency: "MWK",
         email: "customer@example.com",
         first_name: "Customer",
@@ -84,6 +85,8 @@ app.post("/create-payment", async (req, res) => {
         tx_ref: reference,
         return_url: returnUrl,
         callback_url: callbackUrl,
+       
+
       },
       {
         headers: {
@@ -91,6 +94,7 @@ app.post("/create-payment", async (req, res) => {
           Accept: "application/json",
           "Content-Type": "application/json",
         },
+         timeout: 15000,
       }
     );
 

@@ -214,7 +214,10 @@ export function SellScreen({ onBack }: SellScreenProps) {
     const result = await response.json();
 
     if (result?.status === 'success' && result?.data?.checkout_url) {
-      window.location.href = result.data.checkout_url;
+  window.location.href = result.data.checkout_url;
+  return;
+
+
     } else {
       throw new Error(result.message || "Payment initialization failed");
     }
@@ -224,6 +227,10 @@ export function SellScreen({ onBack }: SellScreenProps) {
     alert(`Payment Error: ${err.message}`);
     setIsProcessingPayment(false);
   }
+  finally {
+  setIsProcessingPayment(false);
+}
+
 };
 
   // Handle image file selection
@@ -271,41 +278,46 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
     // Proceed with upload
     await performUpload();
+   
+
   };
 
   // Check for payment success redirect on mount
-  useEffect(() => {
+ useEffect(() => {
   checkUploadCount();
 
-  const queryParams = new URLSearchParams(window.location.search);
-  const status = queryParams.get('status');
-  
-  if (status === 'success') {
-    const savedData = localStorage.getItem('pending_upload');
-    if (savedData) {
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get("status");
+
+  if (status === "success") {
+    const pending = localStorage.getItem("pending_upload");
+    const alreadyUploaded = localStorage.getItem("upload_done");
+
+    if (pending && !alreadyUploaded) {
       try {
-        const { formData: savedForm, images: savedImages } = JSON.parse(savedData);
-        
-        // 1. Restore the data to state so the user sees it
+        const { formData: savedForm, images: savedImages } = JSON.parse(pending);
+
+        // Restore UI
         setFormData(savedForm);
         setImages(savedImages);
-        
-        // 2. Clear URL parameters so a refresh doesn't trigger this again
+
+        localStorage.setItem("upload_done", "true");
+
+        // Clean URL (VERY IMPORTANT)
         window.history.replaceState({}, document.title, window.location.pathname);
-        
-        // 3. IMPORTANT: Trigger the upload automatically
-        // We use a small timeout to ensure state is set before performUpload runs
+
         setTimeout(() => {
-          console.log("Payment verified. Auto-uploading listing...");
+          console.log("Payment confirmed. Completing listing...");
           performUpload();
         }, 500);
 
       } catch (err) {
-        console.error('Error during auto-upload:', err);
+        console.error("Auto-upload failed:", err);
       }
     }
   }
 }, []);
+
   const remainingFreeUploads = Math.max(0, FREE_UPLOADS_LIMIT - uploadCount);
   const needsPayment = uploadCount >= FREE_UPLOADS_LIMIT;
 
