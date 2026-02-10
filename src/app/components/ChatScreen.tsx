@@ -10,12 +10,16 @@ import {
   sendMessage,
   markMessagesAsRead,
   formatMessageTime,
-  formatMessageTimestamp
+  formatMessageTimestamp,
+  ensureChatParticipantsNormalized
 } from '../../lib/chatService';
 
 interface ChatScreenProps {
   onBack: () => void;
 }
+
+// Utility to safely get values from Firestore map keys (matches chatService)
+const safeId = (id: string) => id.replace(/\./g, '_');
 
 export function ChatScreen({ onBack }: ChatScreenProps) {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -29,7 +33,8 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const currentUser = auth.currentUser;
-  const currentUserId = currentUser?.email || 'anonymous';
+  // Use email as primary ID, fallback to UID if email not available
+  const currentUserId = currentUser?.email || currentUser?.uid || 'anonymous';
 
   // Load current user data
   useEffect(() => {
@@ -46,8 +51,13 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
 
   // Subscribe to user's chats
   useEffect(() => {
+    if (!currentUserId) return;
+    
     setLoading(true);
+    console.log('Subscribing to chats for user:', currentUserId);
+    
     const unsubscribe = subscribeToChats(currentUserId, (updatedChats) => {
+      console.log('Chats updated, count:', updatedChats.length);
       setChats(updatedChats);
       setLoading(false);
     });
@@ -62,7 +72,9 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
       return;
     }
 
+    console.log('Subscribing to messages for chat:', selectedChat.id);
     const unsubscribe = subscribeToMessages(selectedChat.id, (updatedMessages) => {
+      console.log('Messages updated, count:', updatedMessages.length);
       setMessages(updatedMessages);
       
       // Mark messages as read when viewing chat
@@ -77,10 +89,10 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
     return () => unsubscribe();
   }, [selectedChat, currentUserId]);
 
-  // Scroll to bottom on initial load
+  // Scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
-  }, [selectedChat]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,9 +115,23 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
     }
   };
 
+  const handleChatSelect = async (chat: Chat) => {
+    // Check and fix normalization if needed
+    await ensureChatParticipantsNormalized(chat.id);
+    setSelectedChat(chat);
+    // Mark as read when opening
+    markMessagesAsRead(chat.id, currentUserId);
+  };
+
   const filteredChats = chats.filter(chat => {
     const otherUserId = chat.participants.find(id => id !== currentUserId);
-    const otherUserName = otherUserId ? chat.participantNames[otherUserId] : '';
+    // Try multiple ways to get the name
+    let otherUserName = '';
+    if (otherUserId) {
+      otherUserName = chat.participantNames[safeId(otherUserId)] || 
+                      chat.participantNames[otherUserId] || 
+                      otherUserId.split('@')[0]; // Fallback to email username
+    }
     
     return (
       otherUserName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -113,10 +139,26 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
     );
   });
 
-  const handleChatSelect = (chat: Chat) => {
-    setSelectedChat(chat);
-    // Mark as read when opening
-    markMessagesAsRead(chat.id, currentUserId);
+  // Helper function to get other user's info from chat
+  const getOtherUserInfo = (chat: Chat) => {
+    const otherUserId = chat.participants.find(id => id !== currentUserId);
+    
+    let otherUserName = 'Unknown';
+    let avatar = '?';
+    
+    if (otherUserId) {
+      otherUserName = chat.participantNames[safeId(otherUserId)] || 
+                      chat.participantNames[otherUserId] || 
+                      otherUserId.split('@')[0];
+      
+      avatar = chat.participantAvatars[safeId(otherUserId)] || 
+               chat.participantAvatars[otherUserId] || 
+               otherUserName[0].toUpperCase();
+    }
+    
+    const unreadCount = chat.unreadCount[safeId(currentUserId)] || chat.unreadCount[currentUserId] || 0;
+    
+    return { otherUserId, otherUserName, avatar, unreadCount };
   };
 
   // Chat List View
@@ -157,10 +199,7 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
             </div>
           ) : (
             filteredChats.map(chat => {
-              const otherUserId = chat.participants.find(id => id !== currentUserId);
-              const otherUserName = otherUserId ? chat.participantNames[otherUserId] : 'Unknown';
-              const avatar = otherUserId ? chat.participantAvatars[otherUserId] : '?';
-              const unreadCount = chat.unreadCount[currentUserId] || 0;
+              const { otherUserName, avatar, unreadCount } = getOtherUserInfo(chat);
               
               return (
                 <div
@@ -200,9 +239,7 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
   }
 
   // Individual Chat View
-  const otherUserId = selectedChat.participants.find(id => id !== currentUserId);
-  const otherUserName = otherUserId ? selectedChat.participantNames[otherUserId] : 'Unknown';
-  const avatar = otherUserId ? selectedChat.participantAvatars[otherUserId] : '?';
+  const { otherUserId, otherUserName, avatar } = getOtherUserInfo(selectedChat);
 
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
@@ -233,31 +270,40 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
             <p className="text-sm mt-1">Start the conversation!</p>
           </div>
         ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.senderId === currentUserId ? 'justify-end' : 'justify-start'}`}
-            >
+          messages.map((message) => {
+            const isCurrentUser = message.senderId === currentUserId;
+            
+            return (
               <div
-                className={`max-w-[75%] rounded-2xl px-4 py-2 ${
-                  message.senderId === currentUserId
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-secondary text-secondary-foreground'
-                }`}
+                key={message.id}
+                className={`flex ${isCurrentUser ? 'justify-end' : 'justify-start'}`}
               >
-                <p className="break-words">{message.text}</p>
-                <p
-                  className={`text-xs mt-1 ${
-                    message.senderId === currentUserId
-                      ? 'text-primary-foreground/70'
-                      : 'text-muted-foreground'
+                <div
+                  className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                    isCurrentUser
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-secondary text-secondary-foreground'
                   }`}
                 >
-                  {formatMessageTimestamp(message.timestamp)}
-                </p>
+                  <p className="break-words">{message.text}</p>
+                  <p
+                    className={`text-xs mt-1 ${
+                      isCurrentUser
+                        ? 'text-primary-foreground/70'
+                        : 'text-muted-foreground'
+                    }`}
+                  >
+                    {formatMessageTimestamp(message.timestamp)}
+                    {!isCurrentUser && (
+                      <span className="ml-2">
+                        • {message.senderName}
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
         <div ref={messagesEndRef} />
       </div>

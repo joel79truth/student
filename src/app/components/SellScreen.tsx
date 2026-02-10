@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
-import { supabase } from '../../supabase';
+import { supabase } from '../../lib/supabase';
 
 const API_BASE =
   import.meta.env.MODE === "production"

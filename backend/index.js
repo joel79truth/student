@@ -67,7 +67,9 @@ app.post("/create-payment", async (req, res) => {
 
 
    
-   const returnUrl = `${frontendUrl}/sell?status=success&tx_ref=${reference}`;
+   const returnUrl =
+  `${frontendUrl}/?payment=success&tx_ref=${reference}`;
+
 console.log("Return URL:", returnUrl);
     const callbackUrl = `${backendUrl}/paychangu/callback`;
 

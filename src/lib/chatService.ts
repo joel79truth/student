@@ -12,7 +12,9 @@ import {
   getDoc,
   Timestamp,
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db } from './firebase';
+import { getUserByUsername, getUserByEmail } from './userService';
+import { deleteField } from 'firebase/firestore';
 
 export interface Message {
   id: string;
@@ -41,6 +43,39 @@ export interface Chat {
 // Utility to safely store IDs as Firestore map keys
 const safeId = (id: string) => id.replace(/\./g, '_');
 
+/**
+ * Normalize user ID - always use email if possible
+ */
+async function normalizeUserId(userId: string): Promise<{id: string, name: string}> {
+  console.log('Normalizing user ID:', userId);
+  
+  // If it's already an email, use it
+  if (userId.includes('@')) {
+    const userData = await getUserByEmail(userId);
+    return {
+      id: userId,
+      name: userData?.name || userId.split('@')[0]
+    };
+  }
+  
+  // If it's a username (like seller_truthjoel165), look up the email
+  const userData = await getUserByUsername(userId);
+  if (userData) {
+    console.log(`Found user data for ${userId}:`, userData.email);
+    return {
+      id: userData.email,  // Use email
+      name: userData.name
+    };
+  }
+  
+  // If we can't find the user, return the original (but this shouldn't happen)
+  console.warn(`Could not normalize user ID: ${userId}, using as-is`);
+  return {
+    id: userId,
+    name: userId
+  };
+}
+
 /** Get or create a chat between two users about a product */
 export async function getOrCreateChat(
   currentUserId: string,
@@ -52,26 +87,43 @@ export async function getOrCreateChat(
   productImage: string
 ): Promise<string> {
   try {
+    console.log('=== getOrCreateChat START ===');
+    console.log('Raw inputs - Current:', currentUserId, 'Other:', otherUserId);
+    
+    // NORMALIZE USER IDs - Always use email
+    const normalizedCurrentUser = await normalizeUserId(currentUserId);
+    const normalizedOtherUser = await normalizeUserId(otherUserId);
+    
+    console.log('Normalized - Current:', normalizedCurrentUser.id, 'Other:', normalizedOtherUser.id);
+    
     const chatsRef = collection(db, 'chats');
-    const q = query(chatsRef, where('participants', 'array-contains', currentUserId));
+    const q = query(chatsRef, where('participants', 'array-contains', normalizedCurrentUser.id));
     const snapshot = await getDocs(q);
 
+    console.log(`Found ${snapshot.docs.length} existing chats for user`);
+
+    // Check if chat already exists between these two users for this product
     for (const docItem of snapshot.docs) {
       const chatData = docItem.data() as Chat;
-      if (chatData.participants.includes(otherUserId) && chatData.productId === productId) {
+      console.log('Checking chat:', docItem.id, 'Participants:', chatData.participants);
+      
+      if (chatData.participants.includes(normalizedOtherUser.id) && chatData.productId === productId) {
+        console.log('✓ Found existing chat:', docItem.id);
         return docItem.id;
       }
     }
 
-    const newChatRef = await addDoc(chatsRef, {
-      participants: [currentUserId, otherUserId],
+    // Create new chat with normalized (email) IDs
+    console.log('Creating new chat with normalized participants');
+    const newChatData = {
+      participants: [normalizedCurrentUser.id, normalizedOtherUser.id],
       participantNames: {
-        [currentUserId]: currentUserName,
-        [otherUserId]: otherUserName,
+        [safeId(normalizedCurrentUser.id)]: normalizedCurrentUser.name,
+        [safeId(normalizedOtherUser.id)]: normalizedOtherUser.name,
       },
       participantAvatars: {
-        [currentUserId]: currentUserName[0].toUpperCase(),
-        [otherUserId]: otherUserName[0].toUpperCase(),
+        [safeId(normalizedCurrentUser.id)]: normalizedCurrentUser.name[0].toUpperCase(),
+        [safeId(normalizedOtherUser.id)]: normalizedOtherUser.name[0].toUpperCase(),
       },
       productId,
       productTitle,
@@ -79,15 +131,19 @@ export async function getOrCreateChat(
       lastMessage: '',
       lastMessageTime: serverTimestamp(),
       unreadCount: {
-        [safeId(currentUserId)]: 0,
-        [safeId(otherUserId)]: 0,
+        [safeId(normalizedCurrentUser.id)]: 0,
+        [safeId(normalizedOtherUser.id)]: 0,
       },
       createdAt: serverTimestamp(),
-    });
+    };
+
+    console.log('New chat data:', newChatData);
+    const newChatRef = await addDoc(chatsRef, newChatData);
+    console.log('✓ Created new chat:', newChatRef.id);
 
     return newChatRef.id;
   } catch (err) {
-    console.error('Error creating chat:', err);
+    console.error('❌ Error creating chat:', err);
     throw err;
   }
 }
@@ -100,15 +156,30 @@ export async function sendMessage(
   text: string
 ): Promise<void> {
   try {
+    console.log('=== sendMessage START ===');
+    console.log('Raw senderId:', senderId, 'Name:', senderName);
+    
+    // NORMALIZE senderId to email
+    const normalizedSender = await normalizeUserId(senderId);
+    console.log('Normalized sender:', normalizedSender.id, 'Name:', normalizedSender.name);
+    
+    // Use normalized sender ID
+    const actualSenderId = normalizedSender.id;
+    const actualSenderName = normalizedSender.name;
+    
+    console.log('Sending message to chat:', chatId, 'from:', actualSenderId);
+    
     // Add the message
-    await addDoc(collection(db, 'messages'), {
+    const messageRef = await addDoc(collection(db, 'messages'), {
       chatId,
-      senderId,
-      senderName,
+      senderId: actualSenderId,  // Use normalized ID
+      senderName: actualSenderName,  // Use normalized name
       text,
       timestamp: serverTimestamp(),
       read: false,
     });
+
+    console.log('✓ Message added with ID:', messageRef.id);
 
     // Update chat's last message & unread counts
     const chatRef = doc(db, 'chats', chatId);
@@ -121,60 +192,183 @@ export async function sendMessage(
         lastMessageTime: serverTimestamp(),
       };
 
+      // Increment unread count for all participants except sender
       chatData.participants.forEach((id) => {
-        if (id !== senderId) {
-          updates[`unreadCount.${safeId(id)}`] = (chatData.unreadCount?.[safeId(id)] || 0) + 1;
+        if (id !== actualSenderId) {  // Use normalized ID
+          const currentUnread = chatData.unreadCount?.[safeId(id)] || 0;
+          updates[`unreadCount.${safeId(id)}`] = currentUnread + 1;
+          console.log(`Updating unread count for ${id} (${safeId(id)}): ${currentUnread + 1}`);
         }
       });
 
       await updateDoc(chatRef, updates);
+      console.log('✓ Chat document updated');
+    } else {
+      console.error('❌ Chat document not found:', chatId);
     }
   } catch (err) {
-    console.error('Error sending message:', err);
+    console.error('❌ Error sending message:', err);
     throw err;
   }
 }
 
 /** Subscribe to messages in a chat (real-time) */
 export function subscribeToMessages(chatId: string, callback: (messages: Message[]) => void): () => void {
+  console.log('=== subscribeToMessages called ===');
+  console.log('Chat ID:', chatId);
+  
   const messagesRef = collection(db, 'messages');
   const q = query(messagesRef, where('chatId', '==', chatId), orderBy('timestamp', 'asc'));
 
-  return onSnapshot(q, (snapshot) => {
-    const messages: Message[] = snapshot.docs.map((docItem) => {
-      const data = docItem.data() as Omit<Message, 'id'>;
-      return { id: docItem.id, ...data };
-    });
-    callback(messages);
+  console.log('Query created:', {
+    collection: 'messages',
+    condition: 'chatId == ' + chatId,
+    orderBy: 'timestamp asc'
   });
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      console.log('=== onSnapshot triggered ===');
+      console.log(`Snapshot has ${snapshot.docs.length} documents`);
+      console.log('Snapshot empty?', snapshot.empty);
+      console.log('Snapshot metadata:', snapshot.metadata);
+      
+      // Log EACH document in detail
+      snapshot.docs.forEach((docItem, index) => {
+        const data = docItem.data();
+        console.log(`--- Message ${index + 1} ---`);
+        console.log('Document ID:', docItem.id);
+        console.log('Text:', data.text);
+        console.log('Sender ID:', data.senderId);
+        console.log('Sender Name:', data.senderName);
+        console.log('Timestamp:', data.timestamp);
+        console.log('Timestamp as Date:', data.timestamp?.toDate?.());
+        console.log('Read status:', data.read);
+        console.log('Chat ID:', data.chatId);
+        console.log('Full data:', JSON.stringify(data, null, 2));
+      });
+      
+      const messages: Message[] = snapshot.docs.map((docItem) => {
+        const data = docItem.data() as Omit<Message, 'id'>;
+        return { id: docItem.id, ...data };
+      });
+      
+      console.log('Calling callback with', messages.length, 'messages');
+      callback(messages);
+    },
+    (error) => {
+      console.error('=== ERROR in subscribeToMessages ===');
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      console.error('Full error:', error);
+    }
+  );
 }
 
 /** Subscribe to user's chats (real-time) */
+/** Subscribe to user's chats (real-time) */
 export function subscribeToChats(userId: string, callback: (chats: Chat[]) => void): () => void {
+  console.log('=== subscribeToChats START ===');
+  console.log('Original userId:', userId);
+  
+  // We'll handle both email and username IDs in the subscription
   const chatsRef = collection(db, 'chats');
-  const q = query(chatsRef, where('participants', 'array-contains', userId), orderBy('lastMessageTime', 'desc'));
-
-  return onSnapshot(q, (snapshot) => {
-    const chats: Chat[] = snapshot.docs.map((docItem) => {
-      const data = docItem.data() as Omit<Chat, 'id'>;
-      return { id: docItem.id, ...data };
-    });
-    callback(chats);
-  });
+  
+  // Start with the provided userId
+  const initialQ = query(
+    chatsRef, 
+    where('participants', 'array-contains', userId), 
+    orderBy('lastMessageTime', 'desc')
+  );
+  
+  return onSnapshot(
+    initialQ,
+    async (snapshot) => {
+      console.log(`Received ${snapshot.docs.length} chats for userId: ${userId}`);
+      
+      // If we got chats, great! Return them
+      if (snapshot.docs.length > 0) {
+        const chats: Chat[] = snapshot.docs.map((docItem) => {
+          const data = docItem.data() as Omit<Chat, 'id'>;
+          return { id: docItem.id, ...data };
+        });
+        console.log('Returning', chats.length, 'chats');
+        callback(chats);
+        return;
+      }
+      
+      // If we got NO chats, try to normalize the userId and search again
+      console.log('No chats found with current userId, trying to normalize...');
+      try {
+        const normalizedUser = await normalizeUserId(userId);
+        console.log('Normalized userId:', normalizedUser.id);
+        
+        // If the normalized ID is different, search again
+        if (normalizedUser.id !== userId) {
+          const normalizedQ = query(
+            chatsRef, 
+            where('participants', 'array-contains', normalizedUser.id), 
+            orderBy('lastMessageTime', 'desc')
+          );
+          
+          // Get a fresh snapshot with normalized ID
+          const normalizedSnapshot = await getDocs(normalizedQ);
+          console.log(`Found ${normalizedSnapshot.docs.length} chats with normalized ID`);
+          
+          const chats: Chat[] = normalizedSnapshot.docs.map((docItem) => {
+            const data = docItem.data() as Omit<Chat, 'id'>;
+            return { id: docItem.id, ...data };
+          });
+          
+          if (chats.length > 0) {
+            console.log('Returning', chats.length, 'chats with normalized ID');
+            callback(chats);
+          } else {
+            console.log('No chats found even with normalized ID');
+            callback([]);
+          }
+        } else {
+          console.log('User ID already normalized, no chats found');
+          callback([]);
+        }
+      } catch (error) {
+        console.error('Error normalizing user ID:', error);
+        callback([]);
+      }
+    },
+    (error) => {
+      console.error('Error subscribing to chats:', error);
+    }
+  );
 }
 
 /** Mark messages as read */
 export async function markMessagesAsRead(chatId: string, userId: string): Promise<void> {
   try {
+    console.log('Marking messages as read for chat:', chatId, 'user:', userId);
+    
+    // Normalize userId to ensure consistency
+    const normalizedUser = await normalizeUserId(userId);
+    const normalizedUserId = normalizedUser.id;
+    
     const chatRef = doc(db, 'chats', chatId);
-    await updateDoc(chatRef, { [`unreadCount.${safeId(userId)}`]: 0 });
+    await updateDoc(chatRef, { [`unreadCount.${safeId(normalizedUserId)}`]: 0 });
 
     const messagesRef = collection(db, 'messages');
-    const q = query(messagesRef, where('chatId', '==', chatId), where('senderId', '!=', userId), where('read', '==', false));
+    const q = query(messagesRef, 
+      where('chatId', '==', chatId), 
+      where('senderId', '!=', normalizedUserId), 
+      where('read', '==', false)
+    );
     const snapshot = await getDocs(q);
 
-    const promises = snapshot.docs.map((docItem) => updateDoc(doc(db, 'messages', docItem.id), { read: true }));
+    const promises = snapshot.docs.map((docItem) => 
+      updateDoc(doc(db, 'messages', docItem.id), { read: true })
+    );
     await Promise.all(promises);
+    
+    console.log(`Marked ${snapshot.docs.length} messages as read`);
   } catch (err) {
     console.error('Error marking messages read:', err);
   }
@@ -207,6 +401,86 @@ export function formatMessageTimestamp(timestamp: Timestamp | null): string {
   if (date.toDateString() === now.toDateString()) {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   } else {
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric', 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true 
+    });
+  }
+}
+/** Check and fix chat participant IDs if needed */
+export async function ensureChatParticipantsNormalized(chatId: string): Promise<void> {
+  try {
+    console.log('=== Checking chat normalization ===');
+    console.log('Chat ID:', chatId);
+    
+    const chatRef = doc(db, 'chats', chatId);
+    const chatDoc = await getDoc(chatRef);
+    
+    if (!chatDoc.exists()) {
+      console.log('Chat not found');
+      return;
+    }
+    
+    const chatData = chatDoc.data() as Chat;
+    console.log('Current participants:', chatData.participants);
+    
+    let needsFix = false;
+    const updates: any = {};
+    
+    // Check each participant
+    for (let i = 0; i < chatData.participants.length; i++) {
+      const participant = chatData.participants[i];
+      
+      // If participant looks like a username (starts with seller_ and no @)
+      if (participant.startsWith('seller_') && !participant.includes('@')) {
+        console.log('Found username participant that needs normalization:', participant);
+        needsFix = true;
+        
+        // Try to get the email for this username
+        const userData = await getUserByUsername(participant);
+        if (userData && userData.email) {
+          console.log(`Normalizing ${participant} -> ${userData.email}`);
+          
+          // Update participant in array
+          chatData.participants[i] = userData.email;
+          
+          // Update maps
+          const oldSafeId = safeId(participant);
+          const newSafeId = safeId(userData.email);
+          
+          // Update participantNames
+          if (chatData.participantNames[oldSafeId]) {
+            updates[`participantNames.${newSafeId}`] = chatData.participantNames[oldSafeId];
+            updates[`participantNames.${oldSafeId}`] = deleteField();
+          }
+          
+          // Update participantAvatars
+          if (chatData.participantAvatars[oldSafeId]) {
+            updates[`participantAvatars.${newSafeId}`] = chatData.participantAvatars[oldSafeId];
+            updates[`participantAvatars.${oldSafeId}`] = deleteField();
+          }
+          
+          // Update unreadCount
+          if (chatData.unreadCount[oldSafeId] !== undefined) {
+            updates[`unreadCount.${newSafeId}`] = chatData.unreadCount[oldSafeId];
+            updates[`unreadCount.${oldSafeId}`] = deleteField();
+          }
+        }
+      }
+    }
+    
+    if (needsFix) {
+      updates.participants = chatData.participants;
+      console.log('Applying fixes to chat:', updates);
+      await updateDoc(chatRef, updates);
+      console.log('✅ Chat normalized successfully');
+    } else {
+      console.log('✅ Chat already normalized');
+    }
+  } catch (error) {
+    console.error('❌ Error normalizing chat:', error);
   }
 }

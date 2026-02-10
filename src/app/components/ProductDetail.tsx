@@ -1,7 +1,7 @@
-import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package } from 'lucide-react';
+import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package, Loader2 } from 'lucide-react';
 import { ImageWithFallback } from '../../app/components/figma/ImageWithFallback';
 import { getOrCreateChat } from '../../lib/chatService';
-import { getCurrentUserData } from '../../lib/userService';
+import { getCurrentUserData, getUserByUsername } from '../../lib/userService';
 import { auth } from '../../lib/firebase';
 import { useState } from 'react';
 
@@ -12,6 +12,7 @@ interface Product {
   image: string;
   seller: string;
   sellerId?: string;
+  sellerEmail?: string; // Add this field
   campus: string;
   distance: string;
   condition: string;
@@ -29,47 +30,58 @@ interface ProductDetailProps {
 export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatStart }: ProductDetailProps) {
   const [loading, setLoading] = useState(false);
 
-  const handleChatWithSeller = async () => {
-    setLoading(true);
-    try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        alert('Please log in to chat with sellers');
-        return;
-      }
-      
-      const userData = await getCurrentUserData(currentUser);
-      const currentUserId = currentUser.email || 'anonymous';
-      const currentUserName = userData?.name || 'Student User';
-      
-      // Create a seller ID if not present (for mock products)
-      const sellerId = product.sellerId || `seller_${product.seller.toLowerCase().replace(/\s+/g, '_')}`;
-      
-      // Create or get existing chat
-      const chatId = await getOrCreateChat(
-        currentUserId,
-        currentUserName,
-        sellerId,
-        product.seller,
-        product.id,
-        product.title,
-        product.image
-      );
-      
-      console.log('Chat created/found:', chatId);
-      
-      // Navigate to chat screen
-      if (onChatStart) {
-        onChatStart();
-      }
-    } catch (error) {
-      console.error('Error starting chat:', error);
-      alert('Failed to start chat. Please try again.');
-    } finally {
-      setLoading(false);
+ const handleChatWithSeller = async () => {
+  setLoading(true);
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      alert('Please log in to chat with sellers');
+      return;
     }
-  };
-
+    
+    const userData = await getCurrentUserData(currentUser);
+    if (!userData) {
+      alert('User data not found. Please try again.');
+      return;
+    }
+    
+    // Use email as current user ID
+    const currentUserId = currentUser.email || currentUser.uid || 'anonymous';
+    const currentUserName = userData.name || 'Student User';
+    
+    // CRITICAL FIX: Use the CORRECT seller email
+    const sellerEmail = 'truthjoel165@gmail.com'; // HARDCODE FOR NOW
+    const sellerName = product.seller;
+    
+    console.log('Creating chat with:');
+    console.log('- Current user:', currentUserId, currentUserName);
+    console.log('- Seller:', sellerEmail, sellerName);
+    console.log('- Product:', product.id, product.title);
+    
+    // Create or get existing chat
+    const chatId = await getOrCreateChat(
+      currentUserId,
+      currentUserName,
+      sellerEmail, // Use the correct email
+      sellerName,
+      product.id,
+      product.title,
+      product.image
+    );
+    
+    console.log('✅ Chat created/found:', chatId);
+    
+    // Navigate to chat screen
+    if (onChatStart) {
+      onChatStart();
+    }
+  } catch (error) {
+    console.error('❌ Error starting chat:', error);
+    alert('Failed to start chat. Please try again.');
+  } finally {
+    setLoading(false);
+  }
+};
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
@@ -151,8 +163,17 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
           disabled={loading}
           className="w-full flex items-center justify-center gap-2 py-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <MessageCircle className="w-5 h-5" />
-          <span>{loading ? 'Starting chat...' : 'Chat with Seller'}</span>
+          {loading ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Starting chat...</span>
+            </>
+          ) : (
+            <>
+              <MessageCircle className="w-5 h-5" />
+              <span>Chat with Seller</span>
+            </>
+          )}
         </button>
       </div>
     </div>

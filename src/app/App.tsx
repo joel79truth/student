@@ -1,20 +1,16 @@
 import { useState, useEffect } from "react";
-import {
-  Home,
-  MessageCircle,
-  PlusCircle,
-  User,
-} from "lucide-react";
+import { Home, MessageCircle, PlusCircle, User } from "lucide-react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 
-// Import screens
+// Screens
 import { SplashScreen } from "../app/components/SplashScreen";
 import { AuthScreen } from "../app/components/AuthScreen";
 import { HomeScreen } from "../app/components/HomeScreen";
 import { SellScreen } from "../app/components/SellScreen";
 import { ChatScreen } from "../app/components/ChatScreen";
 import { ProfileScreen } from "../app/components/ProfileScreen";
+import { JSX } from "react/jsx-runtime";
 
 type Screen =
   | "splash"
@@ -25,56 +21,70 @@ type Screen =
   | "profile";
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] =
-    useState<Screen>("splash");
+  const [currentScreen, setCurrentScreen] = useState<Screen>("splash");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // ✅ Handle PayChangu redirect
   useEffect(() => {
-    // Listen to Firebase Auth state changes
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get("payment");
+
+    if (payment === "success") {
+      setCurrentScreen("sell");
+
+      // Clean URL after handling
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname
+      );
+    }
+  }, []);
+
+  // ✅ Firebase auth listener
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setAuthLoading(false);
+
       if (user) {
         setIsAuthenticated(true);
-        if (currentScreen === "splash" || currentScreen === "auth") {
-          setCurrentScreen("home");
-        }
+        setCurrentScreen((prev) =>
+          prev === "splash" || prev === "auth" ? "home" : prev
+        );
       } else {
         setIsAuthenticated(false);
-        if (currentScreen !== "splash") {
-          setCurrentScreen("auth");
-        }
+        setCurrentScreen("auth");
       }
     });
 
     return () => unsubscribe();
   }, []);
 
+  // ✅ Splash screen timer
   useEffect(() => {
-    // Show splash screen for 2 seconds
+    if (authLoading) return;
+
     const timer = setTimeout(() => {
-      if (!authLoading && currentScreen === "splash") {
+      if (currentScreen === "splash") {
         setCurrentScreen(isAuthenticated ? "home" : "auth");
       }
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [authLoading, isAuthenticated]);
+  }, [authLoading, isAuthenticated, currentScreen]);
 
+  // ✅ External chat navigation listener
   useEffect(() => {
-    // Listen for navigation to chat from other screens
     const handleNavigateToChat = () => {
       setCurrentScreen("chat");
     };
 
-    window.addEventListener(
-      "navigate-to-chat",
-      handleNavigateToChat,
-    );
+    window.addEventListener("navigate-to-chat", handleNavigateToChat);
     return () =>
       window.removeEventListener(
         "navigate-to-chat",
-        handleNavigateToChat,
+        handleNavigateToChat
       );
   }, []);
 
@@ -88,18 +98,16 @@ export default function App() {
       await signOut(auth);
       setIsAuthenticated(false);
       setCurrentScreen("auth");
-    } catch (error) {
-      console.error("Error signing out:", error);
+    } catch (err) {
+      console.error("Logout error:", err);
     }
   };
 
   return (
     <div className="h-screen bg-background flex flex-col max-w-md mx-auto">
-      {/* Render current screen */}
+      {/* Screens */}
       {currentScreen === "splash" && <SplashScreen />}
-      {currentScreen === "auth" && (
-        <AuthScreen onLogin={handleLogin} />
-      )}
+      {currentScreen === "auth" && <AuthScreen onLogin={handleLogin} />}
       {currentScreen === "home" && <HomeScreen />}
       {currentScreen === "sell" && (
         <SellScreen onBack={() => setCurrentScreen("home")} />
@@ -119,55 +127,57 @@ export default function App() {
         currentScreen !== "auth" &&
         currentScreen !== "splash" && (
           <nav className="bg-card border-t border-border p-2 flex justify-around items-center">
-            <button
+            <NavButton
+              label="Home"
+              icon={<Home className="w-6 h-6" />}
+              active={currentScreen === "home"}
               onClick={() => setCurrentScreen("home")}
-              className={`flex flex-col items-center p-2 rounded-lg ${
-                currentScreen === "home"
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              }`}
-            >
-              <Home className="w-6 h-6" />
-              <span className="text-xs mt-1">Home</span>
-            </button>
-
-            <button
+            />
+            <NavButton
+              label="Sell"
+              icon={<PlusCircle className="w-6 h-6" />}
+              active={currentScreen === "sell"}
               onClick={() => setCurrentScreen("sell")}
-              className={`flex flex-col items-center p-2 rounded-lg ${
-                currentScreen === "sell"
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              }`}
-            >
-              <PlusCircle className="w-6 h-6" />
-              <span className="text-xs mt-1">Sell</span>
-            </button>
-
-            <button
+            />
+            <NavButton
+              label="Chat"
+              icon={<MessageCircle className="w-6 h-6" />}
+              active={currentScreen === "chat"}
               onClick={() => setCurrentScreen("chat")}
-              className={`flex flex-col items-center p-2 rounded-lg ${
-                currentScreen === "chat"
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              }`}
-            >
-              <MessageCircle className="w-6 h-6" />
-              <span className="text-xs mt-1">Chat</span>
-            </button>
-
-            <button
+            />
+            <NavButton
+              label="Profile"
+              icon={<User className="w-6 h-6" />}
+              active={currentScreen === "profile"}
               onClick={() => setCurrentScreen("profile")}
-              className={`flex flex-col items-center p-2 rounded-lg ${
-                currentScreen === "profile"
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              }`}
-            >
-              <User className="w-6 h-6" />
-              <span className="text-xs mt-1">Profile</span>
-            </button>
+            />
           </nav>
         )}
     </div>
+  );
+}
+
+// ✅ Small helper for cleaner JSX
+function NavButton({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: JSX.Element;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-center p-2 rounded-lg ${
+        active ? "text-primary" : "text-muted-foreground"
+      }`}
+    >
+      {icon}
+      <span className="text-xs mt-1">{label}</span>
+    </button>
   );
 }
