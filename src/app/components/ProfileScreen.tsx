@@ -1,34 +1,36 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Settings, Heart, Package, LogOut, MapPin, Mail } from 'lucide-react';
-import { ProductCard } from '../components/ProductCard';
+import { ProductCard } from '../../app/components/ProductCard';
+import { auth } from '../../lib/firebase';
+import { getCurrentUserData, UserData } from '../../lib/userService';
 
 interface ProfileScreenProps {
   onLogout: () => void;
   onBack: () => void;
 }
 
-interface UserData {
-  name: string;
-  email: string;
-  campus: string;
-}
-
 export function ProfileScreen({ onLogout, onBack }: ProfileScreenProps) {
   const [activeTab, setActiveTab] = useState<'listings' | 'saved'>('listings');
-  const [userData, setUserData] = useState<UserData>({ name: '', email: '', campus: '' });
+  const [userData, setUserData] = useState<UserData | null>(null);
   const [myProducts, setMyProducts] = useState<any[]>([]);
   const [savedItems, setSavedItems] = useState<string[]>([]);
 
   useEffect(() => {
-    // Load user data
-    const user = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    setUserData(user);
+    // Load user data from Firebase
+    const loadUserData = async () => {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        const data = await getCurrentUserData(currentUser);
+        setUserData(data);
+      }
+    };
+    loadUserData();
 
-    // Load user's products
+    // Load user's products (still from localStorage for now)
     const products = JSON.parse(localStorage.getItem('myProducts') || '[]');
     setMyProducts(products);
 
-    // Load saved items
+    // Load saved items (still from localStorage for now)
     const saved = JSON.parse(localStorage.getItem('savedItems') || '[]');
     setSavedItems(saved);
   }, []);
@@ -38,14 +40,6 @@ export function ProfileScreen({ onLogout, onBack }: ProfileScreenProps) {
       onLogout();
     }
   };
-
-  function onToggleSave(_id: any): void {
-    throw new Error('Function not implemented.');
-  }
-
-  function setSelectedProduct(_product: any): void {
-    throw new Error('Function not implemented.');
-  }
 
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
@@ -63,18 +57,18 @@ export function ProfileScreen({ onLogout, onBack }: ProfileScreenProps) {
         {/* Profile Info */}
         <div className="flex items-center gap-4 mb-4">
           <div className="w-20 h-20 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-3xl">
-            {userData.name ? userData.name[0].toUpperCase() : '?'}
+            {userData?.avatar || '?'}
           </div>
           
           <div className="flex-1">
-            <h1 className="text-2xl mb-1">{userData.name || 'Student User'}</h1>
+            <h1 className="text-2xl mb-1">{userData?.name || 'Student User'}</h1>
             <div className="flex items-center text-sm text-muted-foreground mb-1">
               <Mail className="w-4 h-4 mr-1" />
-              <span>{userData.email || 'user@example.com'}</span>
+              <span>{userData?.email || 'user@example.com'}</span>
             </div>
             <div className="flex items-center text-sm text-muted-foreground">
               <MapPin className="w-4 h-4 mr-1" />
-              <span>{userData.campus || 'Main Campus'}</span>
+              <span>{userData?.campus || 'Main Campus'}</span>
             </div>
           </div>
         </div>
@@ -136,17 +130,13 @@ export function ProfileScreen({ onLogout, onBack }: ProfileScreenProps) {
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 {myProducts.map((product) => (
-                <ProductCard
-  key={product.id}
-  product={product}
-  isSaved={savedItems.includes(product.id)}
-  onToggleSave={() => onToggleSave(product.id)}
-  onClick={() => setSelectedProduct(product)}
-  onBuy={() => console.log("Buying", product.title)}
-  // Add this line:
-  onChatWithSeller={(product) => console.log("Chatting about", product.title)}
-/>
- 
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    isSaved={false}
+                    onToggleSave={() => {}}
+                    onClick={() => {}}
+                  />
                 ))}
               </div>
             )}

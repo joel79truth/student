@@ -1,57 +1,78 @@
 import { useState, useEffect } from 'react';
 import { Search, Filter, MapPin } from 'lucide-react';
-import { ProductCard } from '../components/ProductCard';
-import ProductDetail from "../components/ProductDetail";
-import { supabase } from '../../supabase'; // your Supabase client
-import { auth } from "../../firebase";
-import { getOrCreateChat } from "../../lib/chatService";
+import { ProductCard } from '../../app/components/ProductCard';
+import { ProductDetail } from '../../app/components/ProductDetail';
+import { supabase } from '../../lib/supabase';
 
-interface HomeScreenProps {
-  onOpenChat: () => void; // callback from App.tsx
+interface Product {
+  id: string;
+  title: string;
+  price: number;
+  image: string;
+  seller: string;
+  campus: string;
+  distance: string;
+  condition: string;
+  category: string;
 }
 
-export function HomeScreen({ onOpenChat }: HomeScreenProps) {
-  const [products, setProducts] = useState<any[]>([]);
+export function HomeScreen() {
+  const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [savedItems, setSavedItems] = useState<string[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [navigateToChat, setNavigateToChat] = useState(false);
 
-  const categories = ['All', 'Electronics', 'Textbooks', 'Clothes', 'Dorm Items', 'Furniture', 'Books', 'Other'];
+  const categories = ['All', 'Electronics', 'Textbooks', 'Clothes', 'Dorm Items'];
 
+  // Load saved items from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('savedItems');
     if (saved) setSavedItems(JSON.parse(saved));
-    fetchProducts();
   }, []);
 
-  const fetchProducts = async () => {
-    setLoading(true);
-    try {
+  // Fetch products from Supabase
+  useEffect(() => {
+    const fetchProducts = async () => {
       const { data, error } = await supabase
         .from('products')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
 
       if (error) {
-        console.error('Error fetching products:', error);
+        console.error('Error fetching products:', error.message);
         return;
       }
 
-      const formatted = data.map((item: any) => ({
-        ...item,
-        image: item.images?.[0] || '',
-      }));
+      const productsWithImages: Product[] = (data || []).map((item: any) => {
+        // Handle the images column, which may be an array
+        let imageUrl = '';
+        if (Array.isArray(item.images) && item.images.length > 0) {
+          imageUrl = item.images[0]; // take first image URL
+        } else if (typeof item.images === 'string') {
+          imageUrl = item.images;
+        }
 
-      setProducts(formatted);
-    } catch (err) {
-      console.error('Unexpected fetch error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+        return {
+          id: item.id.toString(),
+          title: item.title || 'Untitled Product',
+          price: item.price || 0,
+          image: imageUrl,
+          seller: item.seller || 'Unknown',
+          campus: item.campus || 'Main Campus',
+          distance: item.distance || '0.5 mi',
+          condition: item.condition || 'Good',
+          category: item.category || 'Other',
+        };
+      });
 
+      setProducts(productsWithImages);
+    };
+
+    fetchProducts();
+  }, []);
+
+  // Toggle saved items
   const toggleSave = (productId: string) => {
     const newSaved = savedItems.includes(productId)
       ? savedItems.filter(id => id !== productId)
@@ -61,26 +82,23 @@ export function HomeScreen({ onOpenChat }: HomeScreenProps) {
     localStorage.setItem('savedItems', JSON.stringify(newSaved));
   };
 
-  // ------------------ HANDLE CHAT ------------------
-  const handleChat = async (product: any) => {
-    const user = auth.currentUser;
-    if (!user) {
-      alert("You must be logged in to chat with the seller.");
-      return;
-    }
-
-    await getOrCreateChat(user.uid, product.seller, product.id, product.title);
-
-    // Instead of navigate(), just call the callback
-    onOpenChat();
-  };
-
+  // Filter products
   const filteredProducts = products.filter(product => {
     const matchesSearch = product.title.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
+  // Handle navigation to chat
+  useEffect(() => {
+    if (navigateToChat) {
+      window.dispatchEvent(new CustomEvent('navigate-to-chat'));
+      setNavigateToChat(false);
+      setSelectedProduct(null);
+    }
+  }, [navigateToChat]);
+
+  // Product detail view
   if (selectedProduct) {
     return (
       <ProductDetail
@@ -88,11 +106,12 @@ export function HomeScreen({ onOpenChat }: HomeScreenProps) {
         isSaved={savedItems.includes(selectedProduct.id)}
         onToggleSave={() => toggleSave(selectedProduct.id)}
         onBack={() => setSelectedProduct(null)}
-        onOpenChat={onOpenChat} // pass callback down
+        onChatStart={() => setNavigateToChat(true)}
       />
     );
   }
 
+  // Main marketplace view
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
@@ -142,26 +161,22 @@ export function HomeScreen({ onOpenChat }: HomeScreenProps) {
 
       {/* Product Grid */}
       <div className="flex-1 overflow-y-auto p-4">
-        {loading ? (
-          <div className="text-center py-12 text-muted-foreground">Loading products...</div>
-        ) : filteredProducts.length === 0 ? (
+        <div className="grid grid-cols-2 gap-3">
+          {filteredProducts.map(product => (
+            <ProductCard
+              key={product.id}
+              product={product}
+              isSaved={savedItems.includes(product.id)}
+              onToggleSave={() => toggleSave(product.id)}
+              onClick={() => setSelectedProduct(product)}
+            />
+          ))}
+        </div>
+
+        {filteredProducts.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12">
             <Search className="w-16 h-16 text-muted-foreground mb-4" />
             <p className="text-muted-foreground">No items found</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3">
-            {filteredProducts.map(product => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                isSaved={savedItems.includes(product.id)}
-                onToggleSave={() => toggleSave(product.id)}
-                onClick={() => setSelectedProduct(product)}
-                onBuy={() => console.log("Buying", product.title)}
-                onChatWithSeller={() => handleChat(product)} // ✅ uses callback
-              />
-            ))}
           </div>
         )}
       </div>

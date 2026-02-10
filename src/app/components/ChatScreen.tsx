@@ -1,252 +1,291 @@
-import { useEffect, useRef, useState } from "react";
-import { auth } from "../../firebase";
-import { onAuthStateChanged } from "firebase/auth";
-
+import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Search, Send, Loader2 } from 'lucide-react';
+import { auth } from '../../lib/firebase';
+import { getCurrentUserData } from '../../lib/userService';
 import {
-  ArrowLeft,
-  Search,
-  Send,
-  MessageCircle,
-  Check,
-  CheckCheck,
-} from "lucide-react";
-
-import {
-  listenToMessages,
-  listenToUserChats,
+  Chat,
+  Message,
+  subscribeToChats,
+  subscribeToMessages,
   sendMessage,
-  markAsRead,
-  setTyping,
-  listenToTyping,
-  type Chat,
-  type Message
-} from "../../lib/chatService";
+  markMessagesAsRead,
+  formatMessageTime,
+  formatMessageTimestamp
+} from '../../lib/chatService';
 
-/* --- Helper: Time Formatter --- */
-const formatTimeAgo = (value: any) => {
-  if (!value) return "";
-  const date = value?.seconds ? new Date(value.seconds * 1000) : new Date(value);
-  if (isNaN(date.getTime())) return "";
+interface ChatScreenProps {
+  onBack: () => void;
+}
 
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return "Just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-};
-
-export function ChatScreen() {
-  /* ---------- STATE & REFS ---------- */
-  const [uid, setUid] = useState<string | null>(null);
+export function ChatScreen({ onBack }: ChatScreenProps) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [remoteIsTyping, setRemoteIsTyping] = useState(false);
-  const [isSending, setIsSending] = useState(false);
+  const [messageInput, setMessageInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [currentUserName, setCurrentUserName] = useState('Student User');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const currentUser = auth.currentUser;
+  const currentUserId = currentUser?.email || 'anonymous';
 
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Load current user data
+  useEffect(() => {
+    const loadUserData = async () => {
+      if (currentUser) {
+        const userData = await getCurrentUserData(currentUser);
+        if (userData) {
+          setCurrentUserName(userData.name);
+        }
+      }
+    };
+    loadUserData();
+  }, [currentUser]);
 
-  /* ---------- AUTH & INITIALIZATION ---------- */
+  // Subscribe to user's chats
   useEffect(() => {
-  return onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      setUid(user.uid);
-      // Logic to bridge Firebase user to Supabase if needed, 
-      // or simply use the Firebase UID as the reference string.
-    } else {
-      setUid(null);
-    }
-  });
-}, []);
-  /* ---------- SUBSCRIPTIONS ---------- */
-  useEffect(() => {
-    if (!uid) return;
-    return listenToUserChats(uid, setChats);
-  }, [uid]);
+    setLoading(true);
+    const unsubscribe = subscribeToChats(currentUserId, (updatedChats) => {
+      setChats(updatedChats);
+      setLoading(false);
+    });
 
+    return () => unsubscribe();
+  }, [currentUserId]);
+
+  // Subscribe to messages when a chat is selected
   useEffect(() => {
-    if (!selectedChat || !uid) {
+    if (!selectedChat) {
       setMessages([]);
       return;
     }
 
-    const unsubMsgs = listenToMessages(selectedChat.id, setMessages);
-    const unsubTyping = listenToTyping(selectedChat.id, uid, setRemoteIsTyping);
-
-    return () => {
-      unsubMsgs();
-      unsubTyping();
-    };
-  }, [selectedChat, uid]);
-
-  /* ---------- SIDE EFFECTS ---------- */
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, remoteIsTyping]);
-
-  useEffect(() => {
-    if (!uid || !selectedChat) return;
-    messages.forEach((msg) => {
-      if (msg.senderId !== uid && !msg.readBy.includes(uid)) {
-        markAsRead(selectedChat.id, msg.id, uid);
-      }
+    const unsubscribe = subscribeToMessages(selectedChat.id, (updatedMessages) => {
+      setMessages(updatedMessages);
+      
+      // Mark messages as read when viewing chat
+      markMessagesAsRead(selectedChat.id, currentUserId);
+      
+      // Scroll to bottom when new messages arrive
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
     });
-  }, [messages, uid, selectedChat]);
 
-  /* ---------- HANDLERS ---------- */
-  const handleTyping = (val: string) => {
-    setInput(val);
-    if (!selectedChat || !uid) return;
+    return () => unsubscribe();
+  }, [selectedChat, currentUserId]);
 
-    if (typingTimer.current) clearTimeout(typingTimer.current);
-    
-    setTyping(selectedChat.id, uid, val.length > 0);
-    typingTimer.current = setTimeout(() => {
-      setTyping(selectedChat.id, uid, false);
-    }, 1500);
-  };
+  // Scroll to bottom on initial load
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [selectedChat]);
 
-  const handleSend = async (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !selectedChat || !uid || isSending) return;
-
-    setIsSending(true);
+    if (!messageInput.trim() || !selectedChat || sending) return;
+    
+    setSending(true);
     try {
-      // Assuming your chatService.sendMessage(chatId, senderId, text)
-      await sendMessage(selectedChat.id, uid, input.trim());
-      setInput("");
-      setTyping(selectedChat.id, uid, false);
-    } catch (err) {
-      console.error("Failed to send:", err);
+      await sendMessage(
+        selectedChat.id,
+        currentUserId,
+        currentUserName,
+        messageInput.trim()
+      );
+      setMessageInput('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+      alert('Failed to send message. Please try again.');
     } finally {
-      setIsSending(false);
+      setSending(false);
     }
   };
 
-  /* ---------- RENDER LOGIC ---------- */
-  const filteredChats = chats.filter((chat) =>
-    chat.productTitle?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  if (!uid) {
+  const filteredChats = chats.filter(chat => {
+    const otherUserId = chat.participants.find(id => id !== currentUserId);
+    const otherUserName = otherUserId ? chat.participantNames[otherUserId] : '';
+    
     return (
-      <div className="flex-1 flex flex-col items-center justify-center space-y-4">
-        <MessageCircle className="w-16 h-16 opacity-20 animate-pulse" />
-        <p className="text-muted-foreground">Please sign in to view messages</p>
-      </div>
+      otherUserName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      chat.productTitle.toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }
+  });
 
-  // --- LIST VIEW ---
+  const handleChatSelect = (chat: Chat) => {
+    setSelectedChat(chat);
+    // Mark as read when opening
+    markMessagesAsRead(chat.id, currentUserId);
+  };
+
+  // Chat List View
   if (!selectedChat) {
     return (
-      <div className="flex-1 flex flex-col h-full">
-        <div className="p-6 border-b">
-          <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
-          <div className="relative mt-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+      <div className="flex-1 flex flex-col bg-background overflow-hidden">
+        {/* Header */}
+        <div className="bg-card border-b border-border p-4">
+          <h1 className="text-2xl mb-3">Messages</h1>
+          
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations..."
-              className="w-full pl-10 pr-4 py-2 bg-muted/50 border-none rounded-xl focus:ring-2 ring-primary"
+              className="w-full pl-10 pr-4 py-3 bg-input-background rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
         </div>
 
+        {/* Chat List */}
         <div className="flex-1 overflow-y-auto">
-          {filteredChats.length > 0 ? (
-            filteredChats.map((chat) => (
-              <button
-                key={chat.id}
-                onClick={() => setSelectedChat(chat)}
-                className="w-full p-4 border-b flex flex-col text-left hover:bg-muted/50 transition-colors"
-              >
-                <div className="flex justify-between items-start mb-1">
-                  <span className="font-semibold text-sm">{chat.productTitle}</span>
-                  <span className="text-[10px] uppercase font-medium opacity-50">
-                    {formatTimeAgo(chat.lastMessageAt)}
-                  </span>
-                </div>
-                <p className="text-sm text-muted-foreground truncate">
-                  {chat.lastMessage || "Start a conversation..."}
-                </p>
-              </button>
-            ))
-          ) : (
-            <div className="p-10 text-center text-muted-foreground">
-              No conversations found.
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+              <p className="text-muted-foreground">Loading chats...</p>
             </div>
+          ) : filteredChats.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="text-6xl mb-4">💬</div>
+              <p className="text-muted-foreground">No messages yet</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {searchQuery ? 'No chats match your search' : 'Start chatting with sellers!'}
+              </p>
+            </div>
+          ) : (
+            filteredChats.map(chat => {
+              const otherUserId = chat.participants.find(id => id !== currentUserId);
+              const otherUserName = otherUserId ? chat.participantNames[otherUserId] : 'Unknown';
+              const avatar = otherUserId ? chat.participantAvatars[otherUserId] : '?';
+              const unreadCount = chat.unreadCount[currentUserId] || 0;
+              
+              return (
+                <div
+                  key={chat.id}
+                  onClick={() => handleChatSelect(chat)}
+                  className="flex items-start gap-3 p-4 border-b border-border hover:bg-accent cursor-pointer transition-colors"
+                >
+                  <div className="w-12 h-12 bg-secondary rounded-full flex items-center justify-center text-2xl flex-shrink-0">
+                    {avatar}
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between mb-1">
+                      <h3 className="truncate">{otherUserName}</h3>
+                      <span className="text-xs text-muted-foreground ml-2">
+                        {formatMessageTime(chat.lastMessageTime)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground truncate">
+                      {chat.lastMessage || 'Start chatting...'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">About: {chat.productTitle}</p>
+                  </div>
+
+                  {unreadCount > 0 && (
+                    <div className="w-6 h-6 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs flex-shrink-0">
+                      {unreadCount}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
     );
   }
 
-  // --- INDIVIDUAL CHAT VIEW ---
-  return (
-    <div className="flex-1 flex flex-col h-full bg-background">
-      {/* Header */}
-      <header className="p-3 border-b flex items-center gap-3 bg-background/80 backdrop-blur-sm sticky top-0 z-10">
-        <button 
-          onClick={() => setSelectedChat(null)}
-          className="p-2 hover:bg-muted rounded-full transition-colors"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h2 className="font-bold text-sm leading-tight">{selectedChat.productTitle}</h2>
-          {remoteIsTyping && (
-            <span className="text-[10px] text-primary font-medium animate-pulse">
-              typing...
-            </span>
-          )}
-        </div>
-      </header>
+  // Individual Chat View
+  const otherUserId = selectedChat.participants.find(id => id !== currentUserId);
+  const otherUserName = otherUserId ? selectedChat.participantNames[otherUserId] : 'Unknown';
+  const avatar = otherUserId ? selectedChat.participantAvatars[otherUserId] : '?';
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg) => {
-          const isOwn = msg.senderId === uid;
-          return (
-            <div key={msg.id} className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
-              <div className={`group relative max-w-[80%] px-4 py-2 rounded-2xl text-sm shadow-sm
-                ${isOwn ? "bg-primary text-primary-foreground rounded-tr-none" : "bg-muted rounded-tl-none"}`}
-              >
-                <p className="leading-relaxed">{msg.text}</p>
-                {isOwn && (
-                  <div className="flex justify-end mt-1 opacity-70">
-                    {msg.readBy.length > 1 ? <CheckCheck size={12} /> : <Check size={12} />}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-        <div ref={bottomRef} />
+  return (
+    <div className="flex-1 flex flex-col bg-background overflow-hidden">
+      {/* Header */}
+      <div className="bg-card border-b border-border p-4 flex items-center gap-3">
+        <button
+          onClick={() => setSelectedChat(null)}
+          className="p-2 hover:bg-accent rounded-lg -ml-2"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        
+        <div className="w-10 h-10 bg-secondary rounded-full flex items-center justify-center text-xl">
+          {avatar}
+        </div>
+        
+        <div className="flex-1 min-w-0">
+          <h2 className="truncate">{otherUserName}</h2>
+          <p className="text-sm text-muted-foreground truncate">{selectedChat.productTitle}</p>
+        </div>
       </div>
 
-      {/* Input Area */}
-      <footer className="p-4 border-t bg-background">
-        <form onSubmit={handleSend} className="flex gap-2 items-center bg-muted/50 p-1 rounded-full border">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+            <p>No messages yet</p>
+            <p className="text-sm mt-1">Start the conversation!</p>
+          </div>
+        ) : (
+          messages.map((message) => (
+            <div
+              key={message.id}
+              className={`flex ${message.senderId === currentUserId ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                  message.senderId === currentUserId
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-secondary text-secondary-foreground'
+                }`}
+              >
+                <p className="break-words">{message.text}</p>
+                <p
+                  className={`text-xs mt-1 ${
+                    message.senderId === currentUserId
+                      ? 'text-primary-foreground/70'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  {formatMessageTimestamp(message.timestamp)}
+                </p>
+              </div>
+            </div>
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Message Input */}
+      <form onSubmit={handleSendMessage} className="bg-card border-t border-border p-4">
+        <div className="flex items-center gap-2">
           <input
-            value={input}
-            onChange={(e) => handleTyping(e.target.value)}
+            type="text"
+            value={messageInput}
+            onChange={(e) => setMessageInput(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 bg-transparent px-4 py-2 text-sm focus:outline-none"
+            disabled={sending}
+            className="flex-1 p-3 rounded-full bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={!input.trim() || isSending}
-            className="bg-primary text-primary-foreground p-2 rounded-full disabled:opacity-50 transition-all active:scale-95"
+            disabled={!messageInput.trim() || sending}
+            className="p-3 bg-primary text-primary-foreground rounded-full hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Send size={18} />
+            {sending ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Send className="w-5 h-5" />
+            )}
           </button>
-        </form>
-      </footer>
+        </div>
+      </form>
     </div>
   );
 }
