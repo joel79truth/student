@@ -49,6 +49,7 @@
     "date-fns": "3.6.0",
     "embla-carousel-react": "8.6.0",
     "firebase": "^12.8.0",
+    "firebase-admin": "^13.6.1",
     "input-otp": "1.4.2",
     "lucide-react": "^0.487.0",
     "motion": "12.23.24",
@@ -76,6 +77,8 @@
     "@types/react-slick": "^0.23.13",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
     "vite": "6.3.5"
   },
   "peerDependencies": {

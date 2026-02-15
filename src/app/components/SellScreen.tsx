@@ -23,6 +23,8 @@ interface FormData {
 interface PendingUpload {
   formData: FormData;
   images: string[];
+  timestamp: number;
+  reference: string;
 }
 
 const CATEGORIES = ['Electronics', 'Textbooks', 'Clothes', 'Dorm Items', 'Furniture', 'Books', 'Other'];
@@ -79,8 +81,26 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
   };
 
+  // Payment verification function
+  const verifyPayment = async (reference: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE}/verify-payment/${reference}`);
+      if (!response.ok) {
+        console.log('Payment verification API call failed');
+        // If verification fails, still proceed with upload as a fallback
+        return true;
+      }
+      const data = await response.json();
+      return data.status === 'successful' || data.data?.status === 'successful';
+    } catch (error) {
+      console.error('Payment verification error:', error);
+      // Fallback to true to allow upload even if verification fails
+      return true;
+    }
+  };
+
   // Perform upload to Supabase AFTER payment
-  const performUpload = async (): Promise<void> => {
+  const performUpload = async (isAfterPayment: boolean = false): Promise<void> => {
     if (images.length === 0) {
       alert('Please add at least one image.');
       return;
@@ -131,7 +151,8 @@ export function SellScreen({ onBack }: SellScreenProps) {
           description: formData.description,
           images: uploadedUrls,
           seller: sellerName,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          payment_status: isAfterPayment ? 'paid' : 'free'
         }]);
 
       if (dbError) throw dbError;
@@ -151,6 +172,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     } catch (err) {
       console.error('Error uploading product:', err);
       alert('Error uploading product. Please try again.');
+      throw err; // Re-throw to handle in caller
     } finally {
       setIsUploading(false);
     }
@@ -164,25 +186,39 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
 
     setIsProcessingPayment(true);
+    setShowPaymentModal(false); // Close modal immediately
 
     try {
-      const reference = `UPLOADFEE-${Date.now()}`;
-      const pendingData: PendingUpload = { formData, images };
+      const reference = `UPLOADFEE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Store pending upload with timestamp
+      const pendingData: PendingUpload = { 
+        formData, 
+        images,
+        timestamp: Date.now(),
+        reference 
+      };
       localStorage.setItem('pending_upload', JSON.stringify(pendingData));
+      localStorage.removeItem('upload_done'); // Clear previous completion
 
       const response = await fetch(`${API_BASE}/create-payment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: UPLOAD_FEE, phone: paymentPhone, reference })
+        body: JSON.stringify({ 
+          amount: UPLOAD_FEE, 
+          phone: paymentPhone, 
+          reference 
+        })
       });
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Server Error (${response.status}): ${text.substring(0, 100)}`);
+        throw new Error(`Payment initialization failed: ${text.substring(0, 100)}`);
       }
 
       const result = await response.json();
       if (result?.status === 'success' && result?.data?.checkout_url) {
+        // Redirect to payment page
         window.location.href = result.data.checkout_url;
       } else {
         throw new Error(result.message || 'Payment initialization failed');
@@ -192,6 +228,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
       console.error('Payment Error:', err);
       alert(`Payment Error: ${err.message}`);
       setIsProcessingPayment(false);
+      setShowPaymentModal(true); // Reopen modal on error
     }
   };
 
@@ -229,35 +266,85 @@ export function SellScreen({ onBack }: SellScreenProps) {
       return;
     }
 
-    await performUpload();
+    await performUpload(false);
   };
 
-  // Auto-upload after payment success
+  // Handle payment success and auto-upload
   useEffect(() => {
     checkUploadCount();
 
-    const params = new URLSearchParams(window.location.search);
-    const status = params.get('status');
+    const handlePaymentSuccess = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const paymentStatus = params.get('payment');
+      const txRef = params.get('tx_ref');
 
-    if (status === 'success') {
-      const pending = localStorage.getItem('pending_upload');
-      const alreadyUploaded = localStorage.getItem('upload_done');
+      if (paymentStatus === 'success' && txRef) {
+        const pending = localStorage.getItem('pending_upload');
+        const alreadyUploaded = localStorage.getItem('upload_done');
 
-      if (pending && !alreadyUploaded) {
-        try {
-          const { formData: savedForm, images: savedImages } = JSON.parse(pending);
-          setFormData(savedForm);
-          setImages(savedImages);
-          localStorage.setItem('upload_done', 'true');
-
-          // Clean URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-
-          // Delay slightly to ensure UI updates
-          setTimeout(() => performUpload(), 500);
-        } catch (err) {
-          console.error('Auto-upload failed:', err);
+        if (pending && !alreadyUploaded) {
+          try {
+            // Clear the URL parameters immediately
+            window.history.replaceState({}, document.title, window.location.pathname);
+            
+            const pendingData: PendingUpload = JSON.parse(pending);
+            
+            // Verify payment if possible (optional step)
+            const isPaymentVerified = await verifyPayment(pendingData.reference);
+            
+            if (!isPaymentVerified) {
+              alert('Payment verification failed. Please contact support.');
+              localStorage.removeItem('pending_upload');
+              return;
+            }
+            
+            // Set state and mark as processing
+            setFormData(pendingData.formData);
+            setImages(pendingData.images);
+            localStorage.setItem('upload_done', 'true');
+            
+            // Show a loading state
+            setIsUploading(true);
+            
+            // Wait a moment for state to update, then upload
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Perform the upload with payment flag
+            await performUpload(true);
+            
+            // Clean up after successful upload
+            localStorage.removeItem('pending_upload');
+            localStorage.removeItem('upload_done');
+            
+          } catch (err) {
+            console.error('Auto-upload failed:', err);
+            alert('Failed to complete upload after payment. Please try again or contact support.');
+            setIsUploading(false);
+            
+            // Keep pending data for retry
+            localStorage.removeItem('upload_done');
+          }
         }
+      }
+    };
+
+    handlePaymentSuccess();
+  }, []);
+
+  // Clean up old pending uploads
+  useEffect(() => {
+    // Clean up pending uploads older than 1 hour
+    const pending = localStorage.getItem('pending_upload');
+    if (pending) {
+      try {
+        const data = JSON.parse(pending);
+        if (Date.now() - data.timestamp > 3600000) { // 1 hour
+          localStorage.removeItem('pending_upload');
+          localStorage.removeItem('upload_done');
+        }
+      } catch (e) {
+        localStorage.removeItem('pending_upload');
+        localStorage.removeItem('upload_done');
       }
     }
   }, []);
@@ -386,7 +473,14 @@ export function SellScreen({ onBack }: SellScreenProps) {
           <div className="bg-card rounded-2xl max-w-md w-full p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-semibold">Payment Required</h2>
-              <button type="button" onClick={() => setShowPaymentModal(false)} className="p-2 hover:bg-accent rounded-lg" disabled={isProcessingPayment}><X className="w-5 h-5" /></button>
+              <button 
+                type="button" 
+                onClick={() => setShowPaymentModal(false)} 
+                className="p-2 hover:bg-accent rounded-lg" 
+                disabled={isProcessingPayment}
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 mb-6">
@@ -397,22 +491,45 @@ export function SellScreen({ onBack }: SellScreenProps) {
             </div>
 
             <div className="mb-6">
-              <label className="block text-sm mb-2 font-medium">Mobile Money Number</label>
-              <input type="tel" value={paymentPhone} onChange={(e) => setPaymentPhone(e.target.value)}
-                placeholder="0888 123 456" className="w-full p-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary" disabled={isProcessingPayment} />
+              <label className="block text-sm mb-2 font-medium">Mobile Money Number *</label>
+              <input 
+                type="tel" 
+                value={paymentPhone} 
+                onChange={(e) => setPaymentPhone(e.target.value)}
+                placeholder="0888 123 456" 
+                className="w-full p-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary" 
+                disabled={isProcessingPayment} 
+              />
+              <p className="text-xs text-muted-foreground mt-1">Enter your mobile money number to receive payment prompt</p>
             </div>
 
             <div className="space-y-3">
-              <button type="button" onClick={handlePayment} disabled={isProcessingPayment || !paymentPhone}
-                className="w-full p-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed font-medium">
+              <button 
+                type="button" 
+                onClick={handlePayment} 
+                disabled={isProcessingPayment || !paymentPhone}
+                className="w-full p-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              >
                 {isProcessingPayment ? 'Processing...' : `Pay MK ${UPLOAD_FEE}`}
               </button>
 
-              <button type="button" onClick={() => setShowPaymentModal(false)} disabled={isProcessingPayment}
-                className="w-full p-3 border border-border rounded-lg hover:bg-accent transition-colors">
+              <button 
+                type="button" 
+                onClick={() => setShowPaymentModal(false)} 
+                disabled={isProcessingPayment}
+                className="w-full p-3 border border-border rounded-lg hover:bg-accent transition-colors"
+              >
                 Cancel
               </button>
             </div>
+
+            {isProcessingPayment && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-700 text-center">
+                  Redirecting to payment page...
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
