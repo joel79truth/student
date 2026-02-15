@@ -30,7 +30,7 @@ interface ProductDetailProps {
 export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatStart }: ProductDetailProps) {
   const [loading, setLoading] = useState(false);
 
- const handleChatWithSeller = async () => {
+const handleChatWithSeller = async () => {
   setLoading(true);
   try {
     const currentUser = auth.currentUser;
@@ -38,43 +38,56 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
       alert('Please log in to chat with sellers');
       return;
     }
-    
+
+    // Get current user data
     const userData = await getCurrentUserData(currentUser);
     if (!userData) {
       alert('User data not found. Please try again.');
       return;
     }
-    
-    // Use email as current user ID
-    const currentUserId = currentUser.email || currentUser.uid || 'anonymous';
+
+    const currentUserId = currentUser.email || currentUser.uid;
     const currentUserName = userData.name || 'Student User';
-    
-    // CRITICAL FIX: Use the CORRECT seller email
-    const sellerEmail = 'truthjoel165@gmail.com'; // HARDCODE FOR NOW
-    const sellerName = product.seller;
-    
+
+    // --- Find seller's email ---
+    let sellerEmail: string | null = null;
+    let sellerName = product.seller; // display name
+
+    if (product.sellerEmail) {
+      sellerEmail = product.sellerEmail;
+    } else if (product.sellerId) {
+      // sellerId might be a username, sellerId field, or even an email prefix
+      const sellerData = await getUserByUsername(product.sellerId);
+      sellerEmail = sellerData?.email || null;
+    } else {
+      // fallback: look up by the seller's display name (username field in Firestore)
+      const sellerData = await getUserByUsername(product.seller);
+      sellerEmail = sellerData?.email || null;
+    }
+
+    if (!sellerEmail) {
+      alert('Could not find seller information. Please try again later.');
+      return;
+    }
+
     console.log('Creating chat with:');
     console.log('- Current user:', currentUserId, currentUserName);
     console.log('- Seller:', sellerEmail, sellerName);
     console.log('- Product:', product.id, product.title);
-    
-    // Create or get existing chat
+
     const chatId = await getOrCreateChat(
       currentUserId,
       currentUserName,
-      sellerEmail, // Use the correct email
+      sellerEmail,
       sellerName,
       product.id,
       product.title,
       product.image
     );
-    
+
     console.log('✅ Chat created/found:', chatId);
-    
-    // Navigate to chat screen
-    if (onChatStart) {
-      onChatStart();
-    }
+
+    if (onChatStart) onChatStart();
   } catch (error) {
     console.error('❌ Error starting chat:', error);
     alert('Failed to start chat. Please try again.');
