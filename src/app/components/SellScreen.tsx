@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { auth } from '../../lib/firebase'; // Add Firebase auth
-import { getCurrentUserData } from '../../lib/userService'; // To get user's actual name
+import { auth } from '../../lib/firebase';
+import { getCurrentUserData, createOrUpdateUser } from '../../lib/userService';
 
 const API_BASE =
   import.meta.env.MODE === "production"
@@ -54,7 +54,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
     description: ''
   });
 
-  // --- FIX: Get current user from Firebase ---
   const currentUser = auth.currentUser;
 
   // Check how many products the user has uploaded
@@ -62,11 +61,10 @@ export function SellScreen({ onBack }: SellScreenProps) {
     try {
       if (!currentUser?.email) return;
 
-      // Count by sellerEmail (more reliable than seller name)
       const { count, error } = await supabase
         .from('products')
         .select('*', { count: 'exact', head: true })
-        .eq('sellerEmail', currentUser.email); // Use email for counting
+        .eq('sellerEmail', currentUser.email);
 
       if (error) throw error;
       setUploadCount(count || 0);
@@ -98,6 +96,21 @@ export function SellScreen({ onBack }: SellScreenProps) {
       return;
     }
 
+    // Ensure user exists in Firestore (create if missing)
+    let userData = await getCurrentUserData(currentUser);
+    if (!userData) {
+      console.log('User data not found, creating on the fly...');
+      userData = await createOrUpdateUser({
+        uid: currentUser.uid,
+        email: currentUser.email!,
+        name: currentUser.displayName || currentUser.email!.split('@')[0],
+      });
+      if (!userData) {
+        alert('Could not create user profile. Please try again.');
+        return;
+      }
+    }
+
     if (images.length === 0) {
       alert('Please add at least one image.');
       return;
@@ -111,11 +124,9 @@ export function SellScreen({ onBack }: SellScreenProps) {
     setIsUploading(true);
 
     try {
-      // --- FIX: Get user's actual name from Firestore ---
-      const userData = await getCurrentUserData(currentUser);
-      const sellerName = userData?.name || currentUser.email?.split('@')[0] || 'Anonymous';
-      const sellerEmail = currentUser.email; // always available if logged in
-      const sellerId = currentUser.uid; // Firebase UID
+      const sellerName = userData.name || currentUser.email!.split('@')[0] || 'Anonymous';
+      const sellerEmail = currentUser.email!;
+      const sellerId = currentUser.uid;
 
       const uploadedUrls: string[] = [];
 
@@ -150,9 +161,9 @@ export function SellScreen({ onBack }: SellScreenProps) {
           campus: formData.campus,
           description: formData.description,
           images: uploadedUrls,
-          seller: sellerName,           // Display name
-          sellerEmail: sellerEmail,      // Email for chat resolution
-          sellerId: sellerId,            // Firebase UID (optional but useful)
+          seller: sellerName,
+          sellerEmail: sellerEmail,
+          sellerId: sellerId,
           created_at: new Date().toISOString(),
           payment_status: isAfterPayment ? 'paid' : 'free'
         }]);

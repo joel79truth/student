@@ -1,7 +1,7 @@
 import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package, Loader2 } from 'lucide-react';
 import { ImageWithFallback } from '../../app/components/figma/ImageWithFallback';
 import { getOrCreateChat, normalizeUserId } from '../../lib/chatService';
-import { getCurrentUserData, getUserByUsername, getUserByEmail } from '../../lib/userService';
+import { getCurrentUserData, getUserByUsername, getUserByEmail, createOrUpdateUser } from '../../lib/userService';
 import { auth } from '../../lib/firebase';
 import { useState } from 'react';
 
@@ -39,22 +39,30 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         return;
       }
 
-      // Get current user data
-      const userData = await getCurrentUserData(currentUser);
+      // Get current user data, with fallback creation if missing
+      let userData = await getCurrentUserData(currentUser);
       if (!userData) {
-        alert('User data not found. Please try again.');
-        return;
+        console.log('User data not found, creating on the fly...');
+        userData = await createOrUpdateUser({
+          uid: currentUser.uid,
+          email: currentUser.email!,
+          name: currentUser.displayName || currentUser.email!.split('@')[0],
+        });
+        if (!userData) {
+          alert('User data not found. Please try again.');
+          return;
+        }
       }
 
       // --- Normalize current user ID to email ---
       const rawCurrentId = currentUser.email || currentUser.uid;
       const normalizedCurrent = await normalizeUserId(rawCurrentId);
       const currentUserId = normalizedCurrent.id; // should be email
-      const currentUserName = userData.name || normalizedCurrent.name; // prefer Firestore name
+      const currentUserName = userData.name || normalizedCurrent.name;
 
       // --- Resolve seller's email ---
       let sellerEmail: string | null = null;
-      const sellerName = product.seller; // display name for the chat
+      const sellerName = product.seller;
 
       // 1. Direct sellerEmail (most reliable)
       if (product.sellerEmail) {
@@ -103,14 +111,7 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         }
       }
 
-      // If still no seller email, check if the current user is the seller (maybe product was created by current user)
       if (!sellerEmail) {
-        // If product.seller matches current user's name, maybe it's self?
-        if (product.seller === userData.name || product.seller === currentUserName) {
-          console.warn('⚠️ Current user appears to be the seller. Cannot chat with self.');
-          alert('You cannot start a chat with yourself.');
-          return;
-        }
         console.error('❌ Could not resolve seller email for:', { seller: product.seller, sellerId: product.sellerId });
         alert('Could not find seller information. Please try again later or contact support.');
         return;
