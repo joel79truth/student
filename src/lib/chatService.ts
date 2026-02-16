@@ -95,6 +95,12 @@ export async function getOrCreateChat(
     const normalizedOtherUser = await normalizeUserId(otherUserId);
     
     console.log('Normalized - Current:', normalizedCurrentUser.id, 'Other:', normalizedOtherUser.id);
+
+    // 🛡️ SAFEGUARD: Prevent self-chat
+    if (normalizedCurrentUser.id === normalizedOtherUser.id) {
+      console.error('❌ Attempted to create chat with self! Aborting.');
+      throw new Error('Cannot start chat with yourself');
+    }
     
     // Fetch fresh user data to ensure names are up-to-date
     const currentUserData = await getUserByEmail(normalizedCurrentUser.id);

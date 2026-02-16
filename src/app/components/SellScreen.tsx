@@ -27,9 +27,9 @@ interface PendingUpload {
   reference: string;
 }
 
-const CATEGORIES = ['Electronics', 'Textbooks', 'Clothes', 'Dorm Items', 'Furniture', 'Books', 'Other'];
+const CATEGORIES = [  'Food', 'Electronics',  'Clothes',  'Books', 'Other'];
 const CONDITIONS = ['New', 'Like New', 'Very Good', 'Good', 'Fair'];
-const CAMPUSES = ['Main Campus', 'North Campus', 'South Campus', 'Downtown Campus'];
+const CAMPUSES = ['Bunda Campus', 'NRC Campus', 'City Campus', 'other'];
 
 const FREE_UPLOADS_LIMIT = 3;
 const UPLOAD_FEE = 300;

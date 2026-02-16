@@ -24,7 +24,7 @@ export function HomeScreen() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [navigateToChat, setNavigateToChat] = useState(false);
 
-  const categories = ['All', 'Electronics', 'Textbooks', 'Clothes', 'Dorm Items'];
+  const categories = ['All', 'Electronics', 'Food', 'Books', 'clothes'];
 
   // Load saved items from localStorage
   useEffect(() => {

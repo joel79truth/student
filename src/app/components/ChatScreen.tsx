@@ -12,7 +12,7 @@ import {
   formatMessageTime,
   formatMessageTimestamp,
   ensureChatParticipantsNormalized,
-  normalizeUserId,      // <-- import the normalization function
+  normalizeUserId,
   safeId
 } from '../../lib/chatService';
 
@@ -28,7 +28,6 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  // Store normalized user ID and name after auth
   const [normalizedUserId, setNormalizedUserId] = useState<string>('');
   const [normalizedUserName, setNormalizedUserName] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -48,7 +47,6 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
         setNormalizedUserName(name);
       } catch (error) {
         console.error('Failed to normalize current user:', error);
-        // Fallback: use raw values
         setNormalizedUserId(rawId);
         setNormalizedUserName(currentUser.email?.split('@')[0] || 'User');
       }
@@ -94,10 +92,8 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
       console.log('Messages updated, count:', updatedMessages.length);
       setMessages(updatedMessages);
       
-      // Mark messages as read when viewing chat
       markMessagesAsRead(selectedChat.id, normalizedUserId);
       
-      // Scroll to bottom when new messages arrive
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
@@ -133,10 +129,8 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
   };
 
   const handleChatSelect = async (chat: Chat) => {
-    // Check and fix normalization if needed
     await ensureChatParticipantsNormalized(chat.id);
     setSelectedChat(chat);
-    // Mark as read when opening
     markMessagesAsRead(chat.id, normalizedUserId);
   };
 
@@ -157,29 +151,42 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
 
   // Helper function to get other user's info from chat
   const getOtherUserInfo = (chat: Chat) => {
-    const otherUserId = chat.participants.find(id => id !== normalizedUserId);
+    // Find a participant that is NOT the current user
+    let otherUserId = chat.participants.find(id => id !== normalizedUserId);
     
+    // If no distinct other participant (corrupted chat with duplicate participants)
     if (!otherUserId) {
-      console.warn('No other participant found in chat:', chat.id);
-      return { otherUserId: null, otherUserName: 'Unknown', avatar: '?', unreadCount: 0 };
+      console.warn('No distinct other participant found in chat:', chat.id, 'Participants:', chat.participants);
+      // Fallback to the first participant (they might be the same, but we need something)
+      const fallbackId = chat.participants[0] || 'unknown';
+      const fallbackName = chat.participantNames[safeId(fallbackId)] || 
+                           chat.participantNames[fallbackId] || 
+                           fallbackId.split('@')[0] || 
+                           'Unknown';
+      return {
+        otherUserId: fallbackId,
+        otherUserName: fallbackName,
+        avatar: chat.participantAvatars[safeId(fallbackId)] || 
+                chat.participantAvatars[fallbackId] || 
+                fallbackName[0]?.toUpperCase() || '?',
+        unreadCount: chat.unreadCount[safeId(normalizedUserId)] || 
+                     chat.unreadCount[normalizedUserId] || 0
+      };
     }
-    
+
     // Try to get name from participantNames using safeId or raw key
     let otherUserName = chat.participantNames[safeId(otherUserId)] || 
                         chat.participantNames[otherUserId] || 
                         otherUserId.split('@')[0] || 
                         'Unknown';
     
-    // If the name still looks like an email or username, try to fetch from user data asynchronously
-    // (We can't await here, so we'll log and maybe update later via a re-fetch)
+    // Background fetch to improve name if it looks like an ID
     if (otherUserName.includes('@') || otherUserName.startsWith('seller_')) {
-      console.log('Other user name appears to be an ID, attempting background fetch for:', otherUserId);
-      // Fire-and-forget: try to get proper name from userService and update chat state
       getUserByEmail(otherUserId).then(userData => {
         if (userData && userData.name !== otherUserName) {
-          console.log('Updating otherUserName from', otherUserName, 'to', userData.name);
-          // We need to update the chat object in state, but that's tricky.
-          // For simplicity, we'll let the next subscription update it.
+          console.log('Background fetch: name for', otherUserId, 'should be', userData.name);
+          // Note: To update the UI, we'd need to update the chat object in state.
+          // For simplicity, we'll rely on next subscription or manual refresh.
         }
       }).catch(err => console.error('Error fetching user data for', otherUserId, err));
     }
