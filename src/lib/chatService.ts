@@ -11,10 +11,10 @@ import {
   getDocs,
   getDoc,
   Timestamp,
+  deleteField,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { getUserByUsername, getUserByEmail } from './userService';
-import { deleteField } from 'firebase/firestore';
 
 export interface Message {
   id: string;
@@ -41,12 +41,12 @@ export interface Chat {
 }
 
 // Utility to safely store IDs as Firestore map keys
-const safeId = (id: string) => id.replace(/\./g, '_');
+export const safeId = (id: string) => id.replace(/\./g, '_');
 
 /**
  * Normalize user ID - always use email if possible
  */
-async function normalizeUserId(userId: string): Promise<{id: string, name: string}> {
+export async function normalizeUserId(userId: string): Promise<{id: string, name: string}> {
   console.log('Normalizing user ID:', userId);
   
   // If it's already an email, use it
@@ -96,6 +96,13 @@ export async function getOrCreateChat(
     
     console.log('Normalized - Current:', normalizedCurrentUser.id, 'Other:', normalizedOtherUser.id);
     
+    // Fetch fresh user data to ensure names are up-to-date
+    const currentUserData = await getUserByEmail(normalizedCurrentUser.id);
+    const otherUserData = await getUserByEmail(normalizedOtherUser.id);
+    
+    const currentName = currentUserData?.name || normalizedCurrentUser.name;
+    const otherName = otherUserData?.name || normalizedOtherUser.name;
+    
     const chatsRef = collection(db, 'chats');
     const q = query(chatsRef, where('participants', 'array-contains', normalizedCurrentUser.id));
     const snapshot = await getDocs(q);
@@ -118,12 +125,12 @@ export async function getOrCreateChat(
     const newChatData = {
       participants: [normalizedCurrentUser.id, normalizedOtherUser.id],
       participantNames: {
-        [safeId(normalizedCurrentUser.id)]: normalizedCurrentUser.name,
-        [safeId(normalizedOtherUser.id)]: normalizedOtherUser.name,
+        [safeId(normalizedCurrentUser.id)]: currentName,
+        [safeId(normalizedOtherUser.id)]: otherName,
       },
       participantAvatars: {
-        [safeId(normalizedCurrentUser.id)]: normalizedCurrentUser.name[0].toUpperCase(),
-        [safeId(normalizedOtherUser.id)]: normalizedOtherUser.name[0].toUpperCase(),
+        [safeId(normalizedCurrentUser.id)]: currentName[0].toUpperCase(),
+        [safeId(normalizedOtherUser.id)]: otherName[0].toUpperCase(),
       },
       productId,
       productTitle,
@@ -267,78 +274,31 @@ export function subscribeToMessages(chatId: string, callback: (messages: Message
 }
 
 /** Subscribe to user's chats (real-time) */
-/** Subscribe to user's chats (real-time) */
 export function subscribeToChats(userId: string, callback: (chats: Chat[]) => void): () => void {
   console.log('=== subscribeToChats START ===');
-  console.log('Original userId:', userId);
+  console.log('Normalized userId for subscription:', userId);
   
-  // We'll handle both email and username IDs in the subscription
   const chatsRef = collection(db, 'chats');
-  
-  // Start with the provided userId
-  const initialQ = query(
+  const q = query(
     chatsRef, 
     where('participants', 'array-contains', userId), 
     orderBy('lastMessageTime', 'desc')
   );
   
   return onSnapshot(
-    initialQ,
-    async (snapshot) => {
+    q,
+    (snapshot) => {
       console.log(`Received ${snapshot.docs.length} chats for userId: ${userId}`);
-      
-      // If we got chats, great! Return them
-      if (snapshot.docs.length > 0) {
-        const chats: Chat[] = snapshot.docs.map((docItem) => {
-          const data = docItem.data() as Omit<Chat, 'id'>;
-          return { id: docItem.id, ...data };
-        });
-        console.log('Returning', chats.length, 'chats');
-        callback(chats);
-        return;
-      }
-      
-      // If we got NO chats, try to normalize the userId and search again
-      console.log('No chats found with current userId, trying to normalize...');
-      try {
-        const normalizedUser = await normalizeUserId(userId);
-        console.log('Normalized userId:', normalizedUser.id);
-        
-        // If the normalized ID is different, search again
-        if (normalizedUser.id !== userId) {
-          const normalizedQ = query(
-            chatsRef, 
-            where('participants', 'array-contains', normalizedUser.id), 
-            orderBy('lastMessageTime', 'desc')
-          );
-          
-          // Get a fresh snapshot with normalized ID
-          const normalizedSnapshot = await getDocs(normalizedQ);
-          console.log(`Found ${normalizedSnapshot.docs.length} chats with normalized ID`);
-          
-          const chats: Chat[] = normalizedSnapshot.docs.map((docItem) => {
-            const data = docItem.data() as Omit<Chat, 'id'>;
-            return { id: docItem.id, ...data };
-          });
-          
-          if (chats.length > 0) {
-            console.log('Returning', chats.length, 'chats with normalized ID');
-            callback(chats);
-          } else {
-            console.log('No chats found even with normalized ID');
-            callback([]);
-          }
-        } else {
-          console.log('User ID already normalized, no chats found');
-          callback([]);
-        }
-      } catch (error) {
-        console.error('Error normalizing user ID:', error);
-        callback([]);
-      }
+      const chats: Chat[] = snapshot.docs.map((docItem) => {
+        const data = docItem.data() as Omit<Chat, 'id'>;
+        return { id: docItem.id, ...data };
+      });
+      callback(chats);
     },
     (error) => {
       console.error('Error subscribing to chats:', error);
+      // Return empty array on error to avoid hanging UI
+      callback([]);
     }
   );
 }
@@ -410,6 +370,7 @@ export function formatMessageTimestamp(timestamp: Timestamp | null): string {
     });
   }
 }
+
 /** Check and fix chat participant IDs if needed */
 export async function ensureChatParticipantsNormalized(chatId: string): Promise<void> {
   try {

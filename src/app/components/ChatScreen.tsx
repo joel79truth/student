@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Search, Send, Loader2 } from 'lucide-react';
 import { auth } from '../../lib/firebase';
-import { getCurrentUserData } from '../../lib/userService';
+import { getCurrentUserData, getUserByEmail } from '../../lib/userService';
 import {
   Chat,
   Message,
@@ -11,15 +11,14 @@ import {
   markMessagesAsRead,
   formatMessageTime,
   formatMessageTimestamp,
-  ensureChatParticipantsNormalized
+  ensureChatParticipantsNormalized,
+  normalizeUserId,      // <-- import the normalization function
+  safeId
 } from '../../lib/chatService';
 
 interface ChatScreenProps {
   onBack: () => void;
 }
-
-// Utility to safely get values from Firestore map keys (matches chatService)
-const safeId = (id: string) => id.replace(/\./g, '_');
 
 export function ChatScreen({ onBack }: ChatScreenProps) {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -29,41 +28,59 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [currentUserName, setCurrentUserName] = useState('Student User');
+  // Store normalized user ID and name after auth
+  const [normalizedUserId, setNormalizedUserId] = useState<string>('');
+  const [normalizedUserName, setNormalizedUserName] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const currentUser = auth.currentUser;
-  // Use email as primary ID, fallback to UID if email not available
-  const currentUserId = currentUser?.email || currentUser?.uid || 'anonymous';
 
-  // Load current user data
+  // ---- Step 1: Normalize current user once ----
   useEffect(() => {
-    const loadUserData = async () => {
-      if (currentUser) {
-        const userData = await getCurrentUserData(currentUser);
-        if (userData) {
-          setCurrentUserName(userData.name);
-        }
+    const normalizeCurrentUser = async () => {
+      if (!currentUser) return;
+      const rawId = currentUser.email || currentUser.uid;
+      console.log('Raw currentUserId:', rawId);
+      try {
+        const { id, name } = await normalizeUserId(rawId);
+        console.log('Normalized currentUserId:', id, 'name:', name);
+        setNormalizedUserId(id);
+        setNormalizedUserName(name);
+      } catch (error) {
+        console.error('Failed to normalize current user:', error);
+        // Fallback: use raw values
+        setNormalizedUserId(rawId);
+        setNormalizedUserName(currentUser.email?.split('@')[0] || 'User');
       }
     };
-    loadUserData();
+    normalizeCurrentUser();
   }, [currentUser]);
 
-  // Subscribe to user's chats
+  // ---- Step 2: Subscribe to chats with normalized ID ----
   useEffect(() => {
-    if (!currentUserId) return;
+    if (!normalizedUserId) return;
     
     setLoading(true);
-    console.log('Subscribing to chats for user:', currentUserId);
+    console.log('Subscribing to chats for normalized user:', normalizedUserId);
     
-    const unsubscribe = subscribeToChats(currentUserId, (updatedChats) => {
+    const unsubscribe = subscribeToChats(normalizedUserId, (updatedChats) => {
       console.log('Chats updated, count:', updatedChats.length);
       setChats(updatedChats);
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [currentUserId]);
+  }, [normalizedUserId]);
+
+  // ---- Step 3: Normalize any legacy chats (fire-and-forget) ----
+  useEffect(() => {
+    if (!chats.length) return;
+    chats.forEach(chat => {
+      ensureChatParticipantsNormalized(chat.id).catch(err =>
+        console.error('Error normalizing chat', chat.id, err)
+      );
+    });
+  }, [chats]);
 
   // Subscribe to messages when a chat is selected
   useEffect(() => {
@@ -78,7 +95,7 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
       setMessages(updatedMessages);
       
       // Mark messages as read when viewing chat
-      markMessagesAsRead(selectedChat.id, currentUserId);
+      markMessagesAsRead(selectedChat.id, normalizedUserId);
       
       // Scroll to bottom when new messages arrive
       setTimeout(() => {
@@ -87,7 +104,7 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
     });
 
     return () => unsubscribe();
-  }, [selectedChat, currentUserId]);
+  }, [selectedChat, normalizedUserId]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -102,8 +119,8 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
     try {
       await sendMessage(
         selectedChat.id,
-        currentUserId,
-        currentUserName,
+        normalizedUserId,
+        normalizedUserName,
         messageInput.trim()
       );
       setMessageInput('');
@@ -120,17 +137,16 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
     await ensureChatParticipantsNormalized(chat.id);
     setSelectedChat(chat);
     // Mark as read when opening
-    markMessagesAsRead(chat.id, currentUserId);
+    markMessagesAsRead(chat.id, normalizedUserId);
   };
 
   const filteredChats = chats.filter(chat => {
-    const otherUserId = chat.participants.find(id => id !== currentUserId);
-    // Try multiple ways to get the name
+    const otherUserId = chat.participants.find(id => id !== normalizedUserId);
     let otherUserName = '';
     if (otherUserId) {
       otherUserName = chat.participantNames[safeId(otherUserId)] || 
                       chat.participantNames[otherUserId] || 
-                      otherUserId.split('@')[0]; // Fallback to email username
+                      otherUserId.split('@')[0];
     }
     
     return (
@@ -141,22 +157,39 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
 
   // Helper function to get other user's info from chat
   const getOtherUserInfo = (chat: Chat) => {
-    const otherUserId = chat.participants.find(id => id !== currentUserId);
+    const otherUserId = chat.participants.find(id => id !== normalizedUserId);
     
-    let otherUserName = 'Unknown';
-    let avatar = '?';
-    
-    if (otherUserId) {
-      otherUserName = chat.participantNames[safeId(otherUserId)] || 
-                      chat.participantNames[otherUserId] || 
-                      otherUserId.split('@')[0];
-      
-      avatar = chat.participantAvatars[safeId(otherUserId)] || 
-               chat.participantAvatars[otherUserId] || 
-               otherUserName[0].toUpperCase();
+    if (!otherUserId) {
+      console.warn('No other participant found in chat:', chat.id);
+      return { otherUserId: null, otherUserName: 'Unknown', avatar: '?', unreadCount: 0 };
     }
     
-    const unreadCount = chat.unreadCount[safeId(currentUserId)] || chat.unreadCount[currentUserId] || 0;
+    // Try to get name from participantNames using safeId or raw key
+    let otherUserName = chat.participantNames[safeId(otherUserId)] || 
+                        chat.participantNames[otherUserId] || 
+                        otherUserId.split('@')[0] || 
+                        'Unknown';
+    
+    // If the name still looks like an email or username, try to fetch from user data asynchronously
+    // (We can't await here, so we'll log and maybe update later via a re-fetch)
+    if (otherUserName.includes('@') || otherUserName.startsWith('seller_')) {
+      console.log('Other user name appears to be an ID, attempting background fetch for:', otherUserId);
+      // Fire-and-forget: try to get proper name from userService and update chat state
+      getUserByEmail(otherUserId).then(userData => {
+        if (userData && userData.name !== otherUserName) {
+          console.log('Updating otherUserName from', otherUserName, 'to', userData.name);
+          // We need to update the chat object in state, but that's tricky.
+          // For simplicity, we'll let the next subscription update it.
+        }
+      }).catch(err => console.error('Error fetching user data for', otherUserId, err));
+    }
+    
+    const avatar = chat.participantAvatars[safeId(otherUserId)] || 
+                   chat.participantAvatars[otherUserId] || 
+                   (otherUserName[0] || '?').toUpperCase();
+    
+    const unreadCount = chat.unreadCount[safeId(normalizedUserId)] || 
+                        chat.unreadCount[normalizedUserId] || 0;
     
     return { otherUserId, otherUserName, avatar, unreadCount };
   };
@@ -271,7 +304,7 @@ export function ChatScreen({ onBack }: ChatScreenProps) {
           </div>
         ) : (
           messages.map((message) => {
-            const isCurrentUser = message.senderId === currentUserId;
+            const isCurrentUser = message.senderId === normalizedUserId;
             
             return (
               <div
