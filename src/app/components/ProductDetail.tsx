@@ -103,9 +103,22 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         }
       }
 
+      // If still no seller email, check if the current user is the seller (maybe product was created by current user)
       if (!sellerEmail) {
+        // If product.seller matches current user's name, maybe it's self?
+        if (product.seller === userData.name || product.seller === currentUserName) {
+          console.warn('⚠️ Current user appears to be the seller. Cannot chat with self.');
+          alert('You cannot start a chat with yourself.');
+          return;
+        }
         console.error('❌ Could not resolve seller email for:', { seller: product.seller, sellerId: product.sellerId });
         alert('Could not find seller information. Please try again later or contact support.');
+        return;
+      }
+
+      // 🛡️ Prevent self-chat
+      if (sellerEmail === currentUserId) {
+        alert('You cannot start a chat with yourself.');
         return;
       }
 

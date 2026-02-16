@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { auth } from '../../lib/firebase'; // Add Firebase auth
+import { getCurrentUserData } from '../../lib/userService'; // To get user's actual name
 
 const API_BASE =
   import.meta.env.MODE === "production"
@@ -27,7 +29,7 @@ interface PendingUpload {
   reference: string;
 }
 
-const CATEGORIES = [  'Food', 'Electronics',  'Clothes',  'Books', 'Other'];
+const CATEGORIES = ['Food', 'Electronics', 'Clothes', 'Books', 'Other'];
 const CONDITIONS = ['New', 'Like New', 'Very Good', 'Good', 'Fair'];
 const CAMPUSES = ['Bunda Campus', 'NRC Campus', 'City Campus', 'other'];
 
@@ -52,27 +54,19 @@ export function SellScreen({ onBack }: SellScreenProps) {
     description: ''
   });
 
-  // Extract name from email
-  const nameFromEmail = (email: string): string => {
-    const namePart = email.split('@')[0];
-    return namePart
-      .replace(/[._-]+/g, ' ')
-      .split(' ')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(' ');
-  };
+  // --- FIX: Get current user from Firebase ---
+  const currentUser = auth.currentUser;
 
   // Check how many products the user has uploaded
   const checkUploadCount = async (): Promise<void> => {
     try {
-      const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-      if (!currentUser.email) return;
+      if (!currentUser?.email) return;
 
-      const sellerName = nameFromEmail(currentUser.email);
+      // Count by sellerEmail (more reliable than seller name)
       const { count, error } = await supabase
         .from('products')
         .select('*', { count: 'exact', head: true })
-        .eq('seller', sellerName);
+        .eq('sellerEmail', currentUser.email); // Use email for counting
 
       if (error) throw error;
       setUploadCount(count || 0);
@@ -87,20 +81,23 @@ export function SellScreen({ onBack }: SellScreenProps) {
       const response = await fetch(`${API_BASE}/verify-payment/${reference}`);
       if (!response.ok) {
         console.log('Payment verification API call failed');
-        // If verification fails, still proceed with upload as a fallback
-        return true;
+        return true; // fallback
       }
       const data = await response.json();
       return data.status === 'successful' || data.data?.status === 'successful';
     } catch (error) {
       console.error('Payment verification error:', error);
-      // Fallback to true to allow upload even if verification fails
       return true;
     }
   };
 
   // Perform upload to Supabase AFTER payment
   const performUpload = async (isAfterPayment: boolean = false): Promise<void> => {
+    if (!currentUser) {
+      alert('You must be logged in to list an item.');
+      return;
+    }
+
     if (images.length === 0) {
       alert('Please add at least one image.');
       return;
@@ -114,6 +111,12 @@ export function SellScreen({ onBack }: SellScreenProps) {
     setIsUploading(true);
 
     try {
+      // --- FIX: Get user's actual name from Firestore ---
+      const userData = await getCurrentUserData(currentUser);
+      const sellerName = userData?.name || currentUser.email?.split('@')[0] || 'Anonymous';
+      const sellerEmail = currentUser.email; // always available if logged in
+      const sellerId = currentUser.uid; // Firebase UID
+
       const uploadedUrls: string[] = [];
 
       // Upload images
@@ -136,10 +139,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
         uploadedUrls.push(data.publicUrl);
       }
 
-      // Insert product
-      const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-      const sellerName = currentUser.email ? nameFromEmail(currentUser.email) : 'Anonymous';
-
+      // Insert product with seller email and ID
       const { error: dbError } = await supabase
         .from('products')
         .insert([{
@@ -150,7 +150,9 @@ export function SellScreen({ onBack }: SellScreenProps) {
           campus: formData.campus,
           description: formData.description,
           images: uploadedUrls,
-          seller: sellerName,
+          seller: sellerName,           // Display name
+          sellerEmail: sellerEmail,      // Email for chat resolution
+          sellerId: sellerId,            // Firebase UID (optional but useful)
           created_at: new Date().toISOString(),
           payment_status: isAfterPayment ? 'paid' : 'free'
         }]);
@@ -172,7 +174,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     } catch (err) {
       console.error('Error uploading product:', err);
       alert('Error uploading product. Please try again.');
-      throw err; // Re-throw to handle in caller
+      throw err;
     } finally {
       setIsUploading(false);
     }
@@ -186,12 +188,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
 
     setIsProcessingPayment(true);
-    setShowPaymentModal(false); // Close modal immediately
+    setShowPaymentModal(false);
 
     try {
       const reference = `UPLOADFEE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      // Store pending upload with timestamp
       const pendingData: PendingUpload = { 
         formData, 
         images,
@@ -199,7 +200,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
         reference 
       };
       localStorage.setItem('pending_upload', JSON.stringify(pendingData));
-      localStorage.removeItem('upload_done'); // Clear previous completion
+      localStorage.removeItem('upload_done');
 
       const response = await fetch(`${API_BASE}/create-payment`, {
         method: 'POST',
@@ -218,7 +219,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       const result = await response.json();
       if (result?.status === 'success' && result?.data?.checkout_url) {
-        // Redirect to payment page
         window.location.href = result.data.checkout_url;
       } else {
         throw new Error(result.message || 'Payment initialization failed');
@@ -228,7 +228,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
       console.error('Payment Error:', err);
       alert(`Payment Error: ${err.message}`);
       setIsProcessingPayment(false);
-      setShowPaymentModal(true); // Reopen modal on error
+      setShowPaymentModal(true);
     }
   };
 
@@ -261,6 +261,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
 
+    if (!currentUser) {
+      alert('Please log in to list an item.');
+      return;
+    }
+
     if (uploadCount >= FREE_UPLOADS_LIMIT) {
       setShowPaymentModal(true);
       return;
@@ -284,12 +289,10 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
         if (pending && !alreadyUploaded) {
           try {
-            // Clear the URL parameters immediately
             window.history.replaceState({}, document.title, window.location.pathname);
             
             const pendingData: PendingUpload = JSON.parse(pending);
             
-            // Verify payment if possible (optional step)
             const isPaymentVerified = await verifyPayment(pendingData.reference);
             
             if (!isPaymentVerified) {
@@ -298,21 +301,16 @@ export function SellScreen({ onBack }: SellScreenProps) {
               return;
             }
             
-            // Set state and mark as processing
             setFormData(pendingData.formData);
             setImages(pendingData.images);
             localStorage.setItem('upload_done', 'true');
             
-            // Show a loading state
             setIsUploading(true);
             
-            // Wait a moment for state to update, then upload
             await new Promise(resolve => setTimeout(resolve, 100));
             
-            // Perform the upload with payment flag
             await performUpload(true);
             
-            // Clean up after successful upload
             localStorage.removeItem('pending_upload');
             localStorage.removeItem('upload_done');
             
@@ -320,8 +318,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
             console.error('Auto-upload failed:', err);
             alert('Failed to complete upload after payment. Please try again or contact support.');
             setIsUploading(false);
-            
-            // Keep pending data for retry
             localStorage.removeItem('upload_done');
           }
         }
@@ -333,12 +329,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
   // Clean up old pending uploads
   useEffect(() => {
-    // Clean up pending uploads older than 1 hour
     const pending = localStorage.getItem('pending_upload');
     if (pending) {
       try {
         const data = JSON.parse(pending);
-        if (Date.now() - data.timestamp > 3600000) { // 1 hour
+        if (Date.now() - data.timestamp > 3600000) {
           localStorage.removeItem('pending_upload');
           localStorage.removeItem('upload_done');
         }
