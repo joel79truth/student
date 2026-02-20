@@ -93,6 +93,16 @@ export async function getUserByUsername(username: string): Promise<UserData | nu
       return emailSnapshot.docs[0].data() as UserData;
     }
     
+    // 🔁 NEW: Try searching by 'name' field as fallback (since product.seller is often the display name)
+    console.log('Attempting search by name field:', username);
+    const nameQ = query(usersRef, where('name', '==', username));
+    const nameSnapshot = await getDocs(nameQ);
+    
+    if (!nameSnapshot.empty) {
+      console.log('Found user by name field');
+      return nameSnapshot.docs[0].data() as UserData;
+    }
+    
     console.log('No user found for username:', username);
     return null;
   } catch (error) {

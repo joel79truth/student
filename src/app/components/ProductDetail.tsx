@@ -1,7 +1,7 @@
 import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package, Loader2 } from 'lucide-react';
 import { ImageWithFallback } from '../../app/components/figma/ImageWithFallback';
 import { getOrCreateChat, normalizeUserId } from '../../lib/chatService';
-import { getCurrentUserData, getUserByUsername, getUserByEmail, createOrUpdateUser } from '../../lib/userService';
+import { getCurrentUserData, getUserByUsername, createOrUpdateUser, getUserByEmail } from '../../lib/userService';
 import { auth } from '../../lib/firebase';
 import { useState } from 'react';
 
@@ -10,15 +10,14 @@ interface Product {
   title: string;
   price: number;
   image: string;
-  seller: string;
-  sellerId?: string;
-  sellerEmail?: string;
+  seller: string;          // display name (optional)
+  sellerEmail: string;      // ✅ add this – the seller's email
+      // you may keep this if needed
   campus: string;
   distance: string;
   condition: string;
   category: string;
 }
-
 interface ProductDetailProps {
   product: Product;
   isSaved: boolean;
@@ -60,7 +59,7 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
       const currentUserId = normalizedCurrent.id; // should be email
       const currentUserName = userData.name || normalizedCurrent.name;
 
-      // --- Resolve seller's email ---
+      // --- Resolve seller's email (no guessing!) ---
       let sellerEmail: string | null = null;
       const sellerName = product.seller;
 
@@ -70,18 +69,7 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         console.log('✅ Using product.sellerEmail:', sellerEmail);
       }
 
-      // 2. Try sellerId (could be UID, email, or username)
-      if (!sellerEmail && product.sellerId) {
-        console.log('🔍 Looking up seller by sellerId:', product.sellerId);
-        if (product.sellerId.includes('@')) {
-          sellerEmail = product.sellerId;
-          console.log('✅ sellerId is an email:', sellerEmail);
-        } else {
-          const sellerData = await getUserByUsername(product.sellerId);
-          sellerEmail = sellerData?.email || null;
-          if (sellerEmail) console.log('✅ Found seller via sellerId lookup:', sellerEmail);
-        }
-      }
+      
 
       // 3. Try looking up by seller display name (product.seller)
       if (!sellerEmail && product.seller) {
@@ -90,29 +78,18 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
           sellerEmail = product.seller;
           console.log('✅ seller name is an email:', sellerEmail);
         } else {
-          const sellerData = await getUserByUsername(product.seller);
+          const trimmedSeller = product.seller.trim(); // 👈 trim to avoid spaces
+          const sellerData = await getUserByUsername(trimmedSeller);
           sellerEmail = sellerData?.email || null;
           if (sellerEmail) console.log('✅ Found seller via display name lookup:', sellerEmail);
         }
       }
 
       // 4. Final fallback: try to construct email from common domains
-      if (!sellerEmail && product.seller && !product.seller.includes('@')) {
-        console.log('🔍 Attempting email construction for:', product.seller);
-        const possibleDomains = ['@gmail.com', '@students.ku.edu', '@ku.edu'];
-        for (const domain of possibleDomains) {
-          const testEmail = `${product.seller.toLowerCase()}${domain}`;
-          const userByEmail = await getUserByEmail(testEmail);
-          if (userByEmail) {
-            sellerEmail = userByEmail.email;
-            console.log('✅ Found seller via constructed email:', sellerEmail);
-            break;
-          }
-        }
-      }
+   
 
       if (!sellerEmail) {
-        console.error('❌ Could not resolve seller email for:', { seller: product.seller, sellerId: product.sellerId });
+        console.error('❌ Could not resolve seller email for:', { seller: product.seller, sellerId: product.seller });
         alert('Could not find seller information. Please try again later or contact support.');
         return;
       }

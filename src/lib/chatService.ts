@@ -82,52 +82,43 @@ export async function getOrCreateChat(
   currentUserName: string,
   otherUserId: string,
   otherUserName: string,
-  productId: string,
-  productTitle: string,
-  productImage: string
+  productId?: string,    // now optional – used only when creating a new chat
+  productTitle?: string,
+  productImage?: string
 ): Promise<string> {
   try {
     console.log('=== getOrCreateChat START ===');
-    console.log('Raw inputs - Current:', currentUserId, 'Other:', otherUserId);
     
-    // NORMALIZE USER IDs - Always use email
+    // Normalize both IDs to emails (your existing logic)
     const normalizedCurrentUser = await normalizeUserId(currentUserId);
     const normalizedOtherUser = await normalizeUserId(otherUserId);
-    
-    console.log('Normalized - Current:', normalizedCurrentUser.id, 'Other:', normalizedOtherUser.id);
 
-    // 🛡️ SAFEGUARD: Prevent self-chat
     if (normalizedCurrentUser.id === normalizedOtherUser.id) {
-      console.error('❌ Attempted to create chat with self! Aborting.');
       throw new Error('Cannot start chat with yourself');
     }
-    
-    // Fetch fresh user data to ensure names are up-to-date
+
+    // Fetch fresh names
     const currentUserData = await getUserByEmail(normalizedCurrentUser.id);
     const otherUserData = await getUserByEmail(normalizedOtherUser.id);
-    
     const currentName = currentUserData?.name || normalizedCurrentUser.name;
     const otherName = otherUserData?.name || normalizedOtherUser.name;
-    
+
     const chatsRef = collection(db, 'chats');
+
+    // 1️⃣ Look for ANY existing chat between these two users (no product filter)
     const q = query(chatsRef, where('participants', 'array-contains', normalizedCurrentUser.id));
     const snapshot = await getDocs(q);
 
-    console.log(`Found ${snapshot.docs.length} existing chats for user`);
-
-    // Check if chat already exists between these two users for this product
     for (const docItem of snapshot.docs) {
       const chatData = docItem.data() as Chat;
-      console.log('Checking chat:', docItem.id, 'Participants:', chatData.participants);
-      
-      if (chatData.participants.includes(normalizedOtherUser.id) && chatData.productId === productId) {
-        console.log('✓ Found existing chat:', docItem.id);
-        return docItem.id;
+      if (chatData.participants.includes(normalizedOtherUser.id)) {
+        console.log('✅ Reusing existing chat (any product):', docItem.id);
+        return docItem.id; // Return the existing chat ID
       }
     }
 
-    // Create new chat with normalized (email) IDs
-    console.log('Creating new chat with normalized participants');
+    // 2️⃣ No chat exists – create a new one with the current product details
+    console.log('🆕 Creating new chat');
     const newChatData = {
       participants: [normalizedCurrentUser.id, normalizedOtherUser.id],
       participantNames: {
@@ -138,9 +129,9 @@ export async function getOrCreateChat(
         [safeId(normalizedCurrentUser.id)]: currentName[0].toUpperCase(),
         [safeId(normalizedOtherUser.id)]: otherName[0].toUpperCase(),
       },
-      productId,
-      productTitle,
-      productImage,
+      productId: productId || '',
+      productTitle: productTitle || '',
+      productImage: productImage || '',
       lastMessage: '',
       lastMessageTime: serverTimestamp(),
       unreadCount: {
@@ -150,13 +141,11 @@ export async function getOrCreateChat(
       createdAt: serverTimestamp(),
     };
 
-    console.log('New chat data:', newChatData);
     const newChatRef = await addDoc(chatsRef, newChatData);
-    console.log('✓ Created new chat:', newChatRef.id);
-
+    console.log('✅ Created new chat:', newChatRef.id);
     return newChatRef.id;
   } catch (err) {
-    console.error('❌ Error creating chat:', err);
+    console.error('❌ Error in getOrCreateChat:', err);
     throw err;
   }
 }
