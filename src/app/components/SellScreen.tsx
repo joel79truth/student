@@ -11,7 +11,7 @@ const API_BASE =
     : "http://localhost:5000";
 
 interface SellScreenProps {
-  onBack: () => void;
+  onBack: () => void; // still provided for the header back button
 }
 
 interface FormData {
@@ -46,9 +46,8 @@ export function SellScreen({ onBack }: SellScreenProps) {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentPhone, setPaymentPhone] = useState('');
-
-  // New state for payment success modal
   const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
+  const [showSuccessToast, setShowSuccessToast] = useState(false); // temporary success message
   const pendingUploadRef = useRef<PendingUpload | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
@@ -93,7 +92,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
   };
 
-  // Core upload function – now accepts optional data parameter
+  // Core upload function
   const performUpload = async (
     isAfterPayment: boolean = false,
     explicitData?: { formData: FormData; images: string[] }
@@ -105,7 +104,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
       return;
     }
 
-    // Ensure user exists in Firestore
     let userData = await getCurrentUserData(currentUser);
     if (!userData) {
       userData = await createOrUpdateUser({
@@ -144,7 +142,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       const uploadedUrls: string[] = [];
 
-      // Upload images to Supabase
       for (let i = 0; i < uploadData.images.length; i++) {
         const image = uploadData.images[i];
         const blob = await fetch(image).then(res => res.blob());
@@ -164,7 +161,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
         uploadedUrls.push(data.publicUrl);
       }
 
-      // Insert product
       const { error: dbError } = await supabase
         .from('products')
         .insert([{
@@ -184,9 +180,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       if (dbError) throw dbError;
 
-      alert('Product listed successfully!');
-
-      // Reset form
+      // ✅ Success – reset form and show toast, but stay on sell screen
       setFormData({ title: '', price: '', category: '', condition: '', campus: '', description: '' });
       setImages([]);
       setImageFiles([]);
@@ -194,8 +188,10 @@ export function SellScreen({ onBack }: SellScreenProps) {
       localStorage.removeItem('upload_done');
       pendingUploadRef.current = null;
 
-      await checkUploadCount();
-      onBack(); // go to previous screen
+      setShowSuccessToast(true);
+      setTimeout(() => setShowSuccessToast(false), 3000); // hide after 3 seconds
+
+      await checkUploadCount(); // update free upload count
 
     } catch (err) {
       console.error('Error uploading product:', err);
@@ -300,9 +296,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     await performUpload(false);
   };
 
-  // ---------------------------------------------
-  // 🔁 DETECT PAYMENT SUCCESS AND SHOW MODAL
-  // ---------------------------------------------
+  // Detect payment success and show modal
   useEffect(() => {
     const handlePaymentSuccess = async () => {
       const params = new URLSearchParams(location.search);
@@ -311,7 +305,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       if (paymentStatus !== 'success' || !txRef) return;
 
-      // Prevent duplicate processing
       if (showPaymentSuccessModal) return;
 
       const pending = localStorage.getItem('pending_upload');
@@ -323,7 +316,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
       try {
         const pendingData: PendingUpload = JSON.parse(pending);
         
-        // Optional: verify payment with backend
         const isPaymentVerified = await verifyPayment(pendingData.reference);
         if (!isPaymentVerified) {
           alert('Payment verification failed. Please contact support.');
@@ -331,13 +323,8 @@ export function SellScreen({ onBack }: SellScreenProps) {
           return;
         }
 
-        // Store in ref for later use
         pendingUploadRef.current = pendingData;
-
-        // Clear query params from URL without reloading
         window.history.replaceState({}, document.title, window.location.pathname);
-
-        // Show success modal
         setShowPaymentSuccessModal(true);
       } catch (err) {
         console.error('Error processing payment success:', err);
@@ -347,9 +334,9 @@ export function SellScreen({ onBack }: SellScreenProps) {
     };
 
     handlePaymentSuccess();
-  }, [location.search]); // runs whenever URL query changes
+  }, [location.search]);
 
-  // Handle the "OK" button click – perform the upload
+  // Handle OK button click – perform the upload
   const handleConfirmUpload = async () => {
     if (!pendingUploadRef.current) {
       alert('No pending upload found. Please start over.');
@@ -357,7 +344,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
       return;
     }
 
-    // Close modal and start upload
     setShowPaymentSuccessModal(false);
     await performUpload(true, {
       formData: pendingUploadRef.current.formData,
@@ -365,7 +351,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     });
   };
 
-  // Initial load: check upload count and clean stale pending uploads
+  // Clean stale pending uploads on mount
   useEffect(() => {
     checkUploadCount();
 
@@ -373,7 +359,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     if (pending) {
       try {
         const data = JSON.parse(pending);
-        if (Date.now() - data.timestamp > 3600000) { // 1 hour expiry
+        if (Date.now() - data.timestamp > 3600000) {
           localStorage.removeItem('pending_upload');
           localStorage.removeItem('upload_done');
         }
@@ -416,6 +402,14 @@ export function SellScreen({ onBack }: SellScreenProps) {
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Success Toast */}
+      {showSuccessToast && (
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2">
+          <CheckCircle className="w-5 h-5" />
+          <span>Product listed successfully!</span>
         </div>
       )}
 
