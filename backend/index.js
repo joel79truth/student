@@ -26,7 +26,7 @@ app.get("/", (req, res) => {
 });
 
 // --------------------
-// PayChangu Callback
+// PayChangu Callback (POST - server-to-server)
 // --------------------
 app.post("/paychangu/callback", async (req, res) => {
   console.log("PayChangu Callback Received:", JSON.stringify(req.body, null, 2));
@@ -36,46 +36,66 @@ app.post("/paychangu/callback", async (req, res) => {
     
     if (!tx_ref) {
       console.error("No transaction reference in callback");
-      return res.sendStatus(200); // Still return 200 to prevent retries
+      return res.sendStatus(200);
     }
     
-    // Log the payment status
     console.log(`Payment Callback for ${tx_ref}: Status = ${status}, Transaction ID = ${transaction_id}`);
     
     if (status === 'successful') {
-      // Here you could:
-      // 1. Update your database to mark the payment as completed
-      // 2. Send email notifications
-      // 3. Trigger other business logic
+      // TODO: Update database, send emails, etc.
       console.log(`✅ Payment ${tx_ref} completed successfully`);
-      
-      // Example database update (you'll need to implement your own DB logic):
-      // await updatePaymentStatus(tx_ref, 'paid', transaction_id);
     } else if (status === 'failed') {
       console.log(`❌ Payment ${tx_ref} failed`);
     }
     
-    // Always return 200 to acknowledge receipt
-    res.sendStatus(200);
-    
+    res.sendStatus(200); // Acknowledge receipt
   } catch (error) {
     console.error("Callback processing error:", error);
-    // Still return 200 to prevent PayChangu from retrying
     res.sendStatus(200);
   }
 });
 
 // --------------------
-// PayChangu Callback (GET - for testing/browser redirects)
+// PayChangu Callback (GET - for browser redirects)
+// --------------------
+// --------------------
+// PayChangu Callback (GET - for browser redirects)
+// --------------------
+// --------------------
+// PayChangu Callback (GET - for browser redirects)
 // --------------------
 app.get("/paychangu/callback", (req, res) => {
-  console.log("PayChangu GET Callback:", req.query);
-  return res.status(200).json({
-    message: "Callback received successfully",
-    data: req.query
-  });
-});
+  console.log("🔥 PayChangu GET Callback HIT at:", new Date().toISOString());
+  console.log("🔍 Full query parameters:", req.query);
 
+  const frontendUrl = process.env.FRONTEND_URL || "https://student-plp2.onrender.com";
+  
+  // Build redirect URL with all received query parameters
+  const queryParams = new URLSearchParams(req.query).toString();
+  const redirectUrl = `${frontendUrl}/sell?${queryParams}`;
+
+  console.log(`➡️ Redirecting browser to frontend: ${redirectUrl}`);
+
+  // Send HTML with multiple fallback redirect methods
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Redirecting...</title>
+        <meta http-equiv="refresh" content="0; url=${redirectUrl}">
+        <script>
+          window.location.href = "${redirectUrl}";
+        </script>
+      </head>
+      <body>
+        <p>Redirecting to <a href="${redirectUrl}">${redirectUrl}</a>...</p>
+      </body>
+    </html>
+  `;
+
+  return res.send(html);
+});
 // --------------------
 // Payment Verification Endpoint
 // --------------------
@@ -89,7 +109,6 @@ app.get("/verify-payment/:reference", async (req, res) => {
     
     console.log(`Verifying payment for reference: ${reference}`);
     
-    // Call PayChangu API to verify the transaction
     const response = await axios.get(
       `https://api.paychangu.com/transaction/${reference}`,
       {
@@ -101,32 +120,26 @@ app.get("/verify-payment/:reference", async (req, res) => {
       }
     );
     
-    // Return the verification data
     res.json({
       status: 'success',
       data: response.data
     });
-    
   } catch (err) {
     console.error("Verification error:", err.message);
     
-    // If PayChangu API returns an error, provide a helpful response
     if (err.response) {
-      // PayChangu API returned an error
       res.status(err.response.status).json({
         status: 'error',
         error: err.response.data?.message || 'Payment verification failed',
         details: err.response.data
       });
     } else if (err.request) {
-      // Request was made but no response received
       res.status(503).json({
         status: 'error',
         error: 'Payment service unavailable',
         details: 'Could not reach payment verification service'
       });
     } else {
-      // Something else went wrong
       res.status(500).json({
         status: 'error',
         error: 'Internal server error during verification',
@@ -137,7 +150,7 @@ app.get("/verify-payment/:reference", async (req, res) => {
 });
 
 // --------------------
-// Create Payment
+// Create Payment (Enhanced Robustness)
 // --------------------
 app.post("/create-payment", async (req, res) => {
   try {
@@ -152,7 +165,6 @@ app.post("/create-payment", async (req, res) => {
       });
     }
 
-    // Validate amount
     const amountNumber = Number(amount);
     if (isNaN(amountNumber) || amountNumber <= 0) {
       return res.status(400).json({ 
@@ -162,7 +174,6 @@ app.post("/create-payment", async (req, res) => {
       });
     }
 
-    // Validate phone number (Malawian format)
     const phoneRegex = /^(088|099|098|081)\d{7}$/;
     if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
       return res.status(400).json({ 
@@ -172,16 +183,10 @@ app.post("/create-payment", async (req, res) => {
       });
     }
 
-    // --------------------
-    // Environment URLs
-    // --------------------
     const frontendUrl = process.env.FRONTEND_URL || "https://student-plp2.onrender.com";
     const backendUrl = process.env.BACKEND_URL || "https://student-1-5tjj.onrender.com";
 
-    // Construct return URL - user will be redirected here after payment
     const returnUrl = `${frontendUrl}/sell?payment=success&tx_ref=${reference}`;
-    
-    // Callback URL for PayChangu server-to-server notifications
     const callbackUrl = `${backendUrl}/paychangu/callback`;
 
     console.log(`Initializing payment:`, {
@@ -192,22 +197,18 @@ app.post("/create-payment", async (req, res) => {
       callbackUrl
     });
 
-    // --------------------
-    // PayChangu Request
-    // --------------------
     const paychanguData = {
       amount: amountNumber,
       currency: "MWK",
       email: "customer@student-market.com",
       first_name: "Student",
       last_name: "Market User",
-      phone: phone.replace(/\s/g, ''), // Remove spaces from phone
+      phone: phone.replace(/\s/g, ''),
       tx_ref: reference,
       return_url: returnUrl,
       callback_url: callbackUrl,
       title: "Student Market Upload Fee",
       description: `Product listing fee - Reference: ${reference}`,
-      // Optional: Add customer IP for fraud detection
       client_ip: req.ip || req.connection.remoteAddress
     };
 
@@ -231,11 +232,26 @@ app.post("/create-payment", async (req, res) => {
       data: response.data
     });
 
-    // Return the payment data to frontend
+    // --- ENHANCED ROBUSTNESS ---
+    // Validate that PayChangu actually succeeded and returned a checkout URL
+    if (response.data.status !== 'success' || !response.data.data?.checkout_url) {
+      console.error('Invalid PayChangu response:', response.data);
+      return res.status(502).json({
+        status: 'error',
+        error: 'Payment provider returned an invalid response',
+        details: response.data
+      });
+    }
+
+    // All good – return checkout_url to frontend
     res.json({
       status: 'success',
       message: 'Payment initialized successfully',
-      data: response.data
+      data: {
+        checkout_url: response.data.data.checkout_url,
+        tx_ref: reference,
+        raw: response.data
+      }
     });
 
   } catch (err) {
@@ -245,19 +261,15 @@ app.post("/create-payment", async (req, res) => {
       status: err.response?.status
     });
 
-    // Determine error type
     let errorMessage = "Payment initialization failed";
     let statusCode = 500;
     
     if (err.response) {
-      // PayChangu API returned an error
       statusCode = err.response.status;
       errorMessage = err.response.data?.message || `Payment service error: ${err.response.status}`;
     } else if (err.request) {
-      // Request was made but no response received
       errorMessage = "Payment service unavailable. Please try again later.";
     } else if (err.code === 'ECONNABORTED') {
-      // Request timeout
       errorMessage = "Payment request timeout. Please try again.";
     }
 
