@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom'; // <-- added
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { auth } from '../../lib/firebase';
@@ -37,9 +38,11 @@ const FREE_UPLOADS_LIMIT = 3;
 const UPLOAD_FEE = 300;
 
 export function SellScreen({ onBack }: SellScreenProps) {
+  const location = useLocation(); // <-- react router hook
   const [images, setImages] = useState<string[]>([]);
   const [, setImageFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAutoUploading, setIsAutoUploading] = useState(false); // <-- new
   const [uploadCount, setUploadCount] = useState(0);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
@@ -60,12 +63,10 @@ export function SellScreen({ onBack }: SellScreenProps) {
   const checkUploadCount = async (): Promise<void> => {
     try {
       if (!currentUser?.email) return;
-
       const { count, error } = await supabase
         .from('products')
         .select('*', { count: 'exact', head: true })
         .eq('sellerEmail', currentUser.email);
-
       if (error) throw error;
       setUploadCount(count || 0);
     } catch (err) {
@@ -73,33 +74,32 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
   };
 
-  // Payment verification function
+  // Payment verification (optional but recommended)
   const verifyPayment = async (reference: string): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE}/verify-payment/${reference}`);
       if (!response.ok) {
-        console.log('Payment verification API call failed');
+        console.log('Payment verification API call failed – assuming success');
         return true; // fallback
       }
       const data = await response.json();
       return data.status === 'successful' || data.data?.status === 'successful';
     } catch (error) {
       console.error('Payment verification error:', error);
-      return true;
+      return true; // fallback
     }
   };
 
-  // Perform upload to Supabase AFTER payment
+  // Core upload function
   const performUpload = async (isAfterPayment: boolean = false): Promise<void> => {
     if (!currentUser) {
       alert('You must be logged in to list an item.');
       return;
     }
 
-    // Ensure user exists in Firestore (create if missing)
+    // Ensure user exists in Firestore
     let userData = await getCurrentUserData(currentUser);
     if (!userData) {
-      console.log('User data not found, creating on the fly...');
       userData = await createOrUpdateUser({
         uid: currentUser.uid,
         email: currentUser.email!,
@@ -122,6 +122,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
 
     setIsUploading(true);
+    if (isAfterPayment) setIsAutoUploading(true); // <-- show special message
 
     try {
       const sellerName = userData.name || currentUser.email!.split('@')[0] || 'Anonymous';
@@ -130,7 +131,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       const uploadedUrls: string[] = [];
 
-      // Upload images
+      // Upload images to Supabase
       for (let i = 0; i < images.length; i++) {
         const image = images[i];
         const blob = await fetch(image).then(res => res.blob());
@@ -150,7 +151,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
         uploadedUrls.push(data.publicUrl);
       }
 
-      // Insert product with seller email and ID
+      // Insert product
       const { error: dbError } = await supabase
         .from('products')
         .insert([{
@@ -172,7 +173,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       alert('Product listed successfully!');
 
-      // Reset
+      // Reset form
       setFormData({ title: '', price: '', category: '', condition: '', campus: '', description: '' });
       setImages([]);
       setImageFiles([]);
@@ -180,7 +181,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
       localStorage.removeItem('upload_done');
 
       await checkUploadCount();
-      onBack();
+      onBack(); // go to previous screen
 
     } catch (err) {
       console.error('Error uploading product:', err);
@@ -188,10 +189,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
       throw err;
     } finally {
       setIsUploading(false);
+      setIsAutoUploading(false);
     }
   };
 
-  // Payment handler
+  // Trigger payment
   const handlePayment = async (): Promise<void> => {
     if (!paymentPhone || paymentPhone.length < 9) {
       alert('Please enter a valid phone number');
@@ -230,7 +232,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       const result = await response.json();
       if (result?.status === 'success' && result?.data?.checkout_url) {
-        window.location.href = result.data.checkout_url;
+        window.location.href = result.data.checkout_url; // redirect to PayChangu
       } else {
         throw new Error(result.message || 'Payment initialization failed');
       }
@@ -268,7 +270,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     setImageFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Handle form submission
+  // Handle form submission (free upload)
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
 
@@ -285,66 +287,85 @@ export function SellScreen({ onBack }: SellScreenProps) {
     await performUpload(false);
   };
 
-  // Handle payment success and auto-upload
+  // ---------------------------------------------
+  // 🔁 AUTO-UPLOAD AFTER PAYMENT (fixed)
+  // ---------------------------------------------
   useEffect(() => {
-    checkUploadCount();
-
     const handlePaymentSuccess = async () => {
-      const params = new URLSearchParams(window.location.search);
+      const params = new URLSearchParams(location.search); // use location from hook
       const paymentStatus = params.get('payment');
       const txRef = params.get('tx_ref');
 
-      if (paymentStatus === 'success' && txRef) {
-        const pending = localStorage.getItem('pending_upload');
-        const alreadyUploaded = localStorage.getItem('upload_done');
+      // Only proceed if we have a success flag and a reference
+      if (paymentStatus !== 'success' || !txRef) return;
 
-        if (pending && !alreadyUploaded) {
-          try {
-            window.history.replaceState({}, document.title, window.location.pathname);
-            
-            const pendingData: PendingUpload = JSON.parse(pending);
-            
-            const isPaymentVerified = await verifyPayment(pendingData.reference);
-            
-            if (!isPaymentVerified) {
-              alert('Payment verification failed. Please contact support.');
-              localStorage.removeItem('pending_upload');
-              return;
-            }
-            
-            setFormData(pendingData.formData);
-            setImages(pendingData.images);
-            localStorage.setItem('upload_done', 'true');
-            
-            setIsUploading(true);
-            
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            await performUpload(true);
-            
-            localStorage.removeItem('pending_upload');
-            localStorage.removeItem('upload_done');
-            
-          } catch (err) {
-            console.error('Auto-upload failed:', err);
-            alert('Failed to complete upload after payment. Please try again or contact support.');
-            setIsUploading(false);
-            localStorage.removeItem('upload_done');
-          }
+      // Prevent duplicate runs (e.g., if URL changes but upload already done)
+      if (isAutoUploading || isUploading) return;
+
+      const pending = localStorage.getItem('pending_upload');
+      const alreadyUploaded = localStorage.getItem('upload_done');
+
+      if (!pending) {
+        console.warn('No pending upload found, but payment success detected.');
+        // Optionally show a message to the user
+        return;
+      }
+
+      if (alreadyUploaded) {
+        console.log('Upload already done for this session.');
+        return;
+      }
+
+      try {
+        // Clear the query parameters from the URL without reloading
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        const pendingData: PendingUpload = JSON.parse(pending);
+
+        // Optional: verify payment with backend
+        const isPaymentVerified = await verifyPayment(pendingData.reference);
+        if (!isPaymentVerified) {
+          alert('Payment verification failed. Please contact support.');
+          localStorage.removeItem('pending_upload');
+          return;
         }
+
+        // Restore form and images
+        setFormData(pendingData.formData);
+        setImages(pendingData.images);
+
+        // Mark as done to prevent re-running
+        localStorage.setItem('upload_done', 'true');
+
+        // Small delay to ensure state updates
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Perform the actual upload
+        await performUpload(true);
+
+        // Clean up storage
+        localStorage.removeItem('pending_upload');
+        localStorage.removeItem('upload_done');
+
+      } catch (err) {
+        console.error('Auto-upload failed:', err);
+        alert('Failed to complete upload after payment. Please try again or contact support.');
+        localStorage.removeItem('upload_done');
       }
     };
 
     handlePaymentSuccess();
-  }, []);
+  }, [location.search]); // <-- dependency on query string – runs on every URL change
 
-  // Clean up old pending uploads
+  // Initial load: check upload count and clean stale pending uploads
   useEffect(() => {
+    checkUploadCount();
+
     const pending = localStorage.getItem('pending_upload');
     if (pending) {
       try {
         const data = JSON.parse(pending);
-        if (Date.now() - data.timestamp > 3600000) {
+        if (Date.now() - data.timestamp > 3600000) { // 1 hour expiry
           localStorage.removeItem('pending_upload');
           localStorage.removeItem('upload_done');
         }
@@ -390,9 +411,16 @@ export function SellScreen({ onBack }: SellScreenProps) {
         </div>
       )}
 
+      {/* Show auto-upload in progress */}
+      {isAutoUploading && (
+        <div className="bg-green-50 border-l-4 border-green-400 p-4 m-4 rounded-r-lg">
+          <p className="text-green-800 font-medium">✅ Payment successful! Now uploading your item...</p>
+        </div>
+      )}
+
       {/* Form */}
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4">
-        {/* Images */}
+        {/* Images (same as before) */}
         <div className="mb-6">
           <label className="block text-sm mb-1 font-medium">{images.length}/5 Photos Selected</label>
           <div className="grid grid-cols-3 gap-2">
@@ -430,7 +458,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
             placeholder="0.00" required />
         </div>
 
-        {/* Category, Condition, Campus, Description */}
+        {/* Category */}
         <div className="mb-4">
           <label className="block text-sm mb-2 font-medium">Category *</label>
           <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} required
@@ -440,6 +468,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
           </select>
         </div>
 
+        {/* Condition */}
         <div className="mb-4">
           <label className="block text-sm mb-2 font-medium">Condition *</label>
           <select value={formData.condition} onChange={(e) => setFormData({ ...formData, condition: e.target.value })} required
@@ -449,6 +478,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
           </select>
         </div>
 
+        {/* Campus */}
         <div className="mb-4">
           <label className="block text-sm mb-2 font-medium">Campus *</label>
           <select value={formData.campus} onChange={(e) => setFormData({ ...formData, campus: e.target.value })} required
@@ -458,6 +488,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
           </select>
         </div>
 
+        {/* Description */}
         <div className="mb-4">
           <label className="block text-sm mb-2 font-medium">Description</label>
           <textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -465,75 +496,52 @@ export function SellScreen({ onBack }: SellScreenProps) {
             placeholder="Describe your item" />
         </div>
 
-        {/* Submit */}
-        <button type="submit" disabled={isUploading}
-          className={`w-full p-3 bg-primary text-primary-foreground rounded-lg transition-all mb-4 flex items-center justify-center gap-2 font-medium ${isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
-          {needsPayment && <CreditCard className="w-5 h-5" />}
-          {isUploading ? 'Uploading...' : needsPayment ? `Pay MK${UPLOAD_FEE} & List Item` : 'List Item'}
+        {/* Submit button */}
+        <button type="submit" disabled={isUploading || isAutoUploading}
+          className={`w-full p-3 bg-primary text-primary-foreground rounded-lg transition-all mb-4 flex items-center justify-center gap-2 font-medium ${
+            isUploading || isAutoUploading ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'
+          }`}>
+          {needsPayment && !isAutoUploading && <CreditCard className="w-5 h-5" />}
+          {isUploading ? 'Uploading...' : isAutoUploading ? 'Completing upload...' : needsPayment ? `Pay MK${UPLOAD_FEE} & List Item` : 'List Item'}
         </button>
       </form>
 
-      {/* Payment Modal */}
+      {/* Payment Modal (unchanged) */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-card rounded-2xl max-w-md w-full p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-semibold">Payment Required</h2>
-              <button 
-                type="button" 
-                onClick={() => setShowPaymentModal(false)} 
-                className="p-2 hover:bg-accent rounded-lg" 
-                disabled={isProcessingPayment}
-              >
+              <button type="button" onClick={() => setShowPaymentModal(false)} className="p-2 hover:bg-accent rounded-lg" disabled={isProcessingPayment}>
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="bg-primary/10 border border-primary/20 rounded-lg p-4 mb-6">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Upload Fee:</span>
                 <span className="text-2xl font-bold text-primary">MK {UPLOAD_FEE}</span>
               </div>
             </div>
-
             <div className="mb-6">
               <label className="block text-sm mb-2 font-medium">Mobile Money Number *</label>
-              <input 
-                type="tel" 
-                value={paymentPhone} 
-                onChange={(e) => setPaymentPhone(e.target.value)}
-                placeholder="0888 123 456" 
-                className="w-full p-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary" 
-                disabled={isProcessingPayment} 
-              />
+              <input type="tel" value={paymentPhone} onChange={(e) => setPaymentPhone(e.target.value)}
+                placeholder="0888 123 456" className="w-full p-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+                disabled={isProcessingPayment} />
               <p className="text-xs text-muted-foreground mt-1">Enter your mobile money number to receive payment prompt</p>
             </div>
-
             <div className="space-y-3">
-              <button 
-                type="button" 
-                onClick={handlePayment} 
-                disabled={isProcessingPayment || !paymentPhone}
-                className="w-full p-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-              >
+              <button type="button" onClick={handlePayment} disabled={isProcessingPayment || !paymentPhone}
+                className="w-full p-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed font-medium">
                 {isProcessingPayment ? 'Processing...' : `Pay MK ${UPLOAD_FEE}`}
               </button>
-
-              <button 
-                type="button" 
-                onClick={() => setShowPaymentModal(false)} 
-                disabled={isProcessingPayment}
-                className="w-full p-3 border border-border rounded-lg hover:bg-accent transition-colors"
-              >
+              <button type="button" onClick={() => setShowPaymentModal(false)} disabled={isProcessingPayment}
+                className="w-full p-3 border border-border rounded-lg hover:bg-accent transition-colors">
                 Cancel
               </button>
             </div>
-
             {isProcessingPayment && (
               <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-blue-700 text-center">
-                  Redirecting to payment page...
-                </p>
+                <p className="text-sm text-blue-700 text-center">Redirecting to payment page...</p>
               </div>
             )}
           </div>
