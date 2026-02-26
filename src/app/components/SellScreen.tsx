@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom'; // <-- added
+import { useLocation } from 'react-router-dom';
 import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { auth } from '../../lib/firebase';
@@ -38,11 +38,11 @@ const FREE_UPLOADS_LIMIT = 3;
 const UPLOAD_FEE = 300;
 
 export function SellScreen({ onBack }: SellScreenProps) {
-  const location = useLocation(); // <-- react router hook
+  const location = useLocation();
   const [images, setImages] = useState<string[]>([]);
   const [, setImageFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [isAutoUploading, setIsAutoUploading] = useState(false); // <-- new
+  const [isAutoUploading, setIsAutoUploading] = useState(false);
   const [uploadCount, setUploadCount] = useState(0);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
@@ -90,8 +90,17 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
   };
 
-  // Core upload function
-  const performUpload = async (isAfterPayment: boolean = false): Promise<void> => {
+  // ------------------------------------------------------------
+  // Core upload function – now accepts optional data parameter
+  // so it can be called directly with restored data after payment.
+  // ------------------------------------------------------------
+  const performUpload = async (
+    isAfterPayment: boolean = false,
+    explicitData?: { formData: FormData; images: string[] }
+  ): Promise<void> => {
+    // Use explicit data if provided, otherwise fall back to component state
+    const uploadData = explicitData || { formData, images };
+
     if (!currentUser) {
       alert('You must be logged in to list an item.');
       return;
@@ -111,18 +120,24 @@ export function SellScreen({ onBack }: SellScreenProps) {
       }
     }
 
-    if (images.length === 0) {
+    if (uploadData.images.length === 0) {
       alert('Please add at least one image.');
       return;
     }
 
-    if (!formData.title || !formData.price || !formData.category || !formData.condition || !formData.campus) {
+    if (
+      !uploadData.formData.title ||
+      !uploadData.formData.price ||
+      !uploadData.formData.category ||
+      !uploadData.formData.condition ||
+      !uploadData.formData.campus
+    ) {
       alert('Please fill in all required fields.');
       return;
     }
 
     setIsUploading(true);
-    if (isAfterPayment) setIsAutoUploading(true); // <-- show special message
+    if (isAfterPayment) setIsAutoUploading(true);
 
     try {
       const sellerName = userData.name || currentUser.email!.split('@')[0] || 'Anonymous';
@@ -132,8 +147,8 @@ export function SellScreen({ onBack }: SellScreenProps) {
       const uploadedUrls: string[] = [];
 
       // Upload images to Supabase
-      for (let i = 0; i < images.length; i++) {
-        const image = images[i];
+      for (let i = 0; i < uploadData.images.length; i++) {
+        const image = uploadData.images[i];
         const blob = await fetch(image).then(res => res.blob());
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
         const filePath = `products/${fileName}`;
@@ -155,12 +170,12 @@ export function SellScreen({ onBack }: SellScreenProps) {
       const { error: dbError } = await supabase
         .from('products')
         .insert([{
-          title: formData.title,
-          price: parseFloat(formData.price),
-          category: formData.category,
-          condition: formData.condition,
-          campus: formData.campus,
-          description: formData.description,
+          title: uploadData.formData.title,
+          price: parseFloat(uploadData.formData.price),
+          category: uploadData.formData.category,
+          condition: uploadData.formData.condition,
+          campus: uploadData.formData.campus,
+          description: uploadData.formData.description,
           images: uploadedUrls,
           seller: sellerName,
           sellerEmail: sellerEmail,
@@ -292,14 +307,13 @@ export function SellScreen({ onBack }: SellScreenProps) {
   // ---------------------------------------------
   useEffect(() => {
     const handlePaymentSuccess = async () => {
-      const params = new URLSearchParams(location.search); // use location from hook
+      const params = new URLSearchParams(location.search);
       const paymentStatus = params.get('payment');
       const txRef = params.get('tx_ref');
 
-      // Only proceed if we have a success flag and a reference
       if (paymentStatus !== 'success' || !txRef) return;
 
-      // Prevent duplicate runs (e.g., if URL changes but upload already done)
+      // Prevent duplicate runs
       if (isAutoUploading || isUploading) return;
 
       const pending = localStorage.getItem('pending_upload');
@@ -307,7 +321,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       if (!pending) {
         console.warn('No pending upload found, but payment success detected.');
-        // Optionally show a message to the user
         return;
       }
 
@@ -317,7 +330,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
       }
 
       try {
-        // Clear the query parameters from the URL without reloading
+        // Clear query params from URL without reloading
         window.history.replaceState({}, document.title, window.location.pathname);
 
         const pendingData: PendingUpload = JSON.parse(pending);
@@ -330,20 +343,16 @@ export function SellScreen({ onBack }: SellScreenProps) {
           return;
         }
 
-        // Restore form and images
-        setFormData(pendingData.formData);
-        setImages(pendingData.images);
-
         // Mark as done to prevent re-running
         localStorage.setItem('upload_done', 'true');
 
-        // Small delay to ensure state updates
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Perform the upload directly with the restored data – no state delay!
+        await performUpload(true, {
+          formData: pendingData.formData,
+          images: pendingData.images
+        });
 
-        // Perform the actual upload
-        await performUpload(true);
-
-        // Clean up storage
+        // Clean up storage (performUpload already does this, but double‑check)
         localStorage.removeItem('pending_upload');
         localStorage.removeItem('upload_done');
 
@@ -355,7 +364,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
     };
 
     handlePaymentSuccess();
-  }, [location.search]); // <-- dependency on query string – runs on every URL change
+  }, [location.search]); // runs whenever the URL query changes
 
   // Initial load: check upload count and clean stale pending uploads
   useEffect(() => {
@@ -420,7 +429,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4">
-        {/* Images (same as before) */}
+        {/* Images */}
         <div className="mb-6">
           <label className="block text-sm mb-1 font-medium">{images.length}/5 Photos Selected</label>
           <div className="grid grid-cols-3 gap-2">
@@ -506,7 +515,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
         </button>
       </form>
 
-      {/* Payment Modal (unchanged) */}
+      {/* Payment Modal */}
       {showPaymentModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-card rounded-2xl max-w-md w-full p-6 shadow-2xl">
