@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ArrowLeft, Camera, X, CreditCard, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Camera, X, CreditCard, AlertCircle, CheckCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { auth } from '../../lib/firebase';
 import { getCurrentUserData, createOrUpdateUser } from '../../lib/userService';
@@ -42,11 +42,14 @@ export function SellScreen({ onBack }: SellScreenProps) {
   const [images, setImages] = useState<string[]>([]);
   const [, setImageFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [isAutoUploading, setIsAutoUploading] = useState(false);
   const [uploadCount, setUploadCount] = useState(0);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentPhone, setPaymentPhone] = useState('');
+
+  // New state for payment success modal
+  const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
+  const pendingUploadRef = useRef<PendingUpload | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
     title: '',
@@ -90,15 +93,11 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
   };
 
-  // ------------------------------------------------------------
   // Core upload function – now accepts optional data parameter
-  // so it can be called directly with restored data after payment.
-  // ------------------------------------------------------------
   const performUpload = async (
     isAfterPayment: boolean = false,
     explicitData?: { formData: FormData; images: string[] }
   ): Promise<void> => {
-    // Use explicit data if provided, otherwise fall back to component state
     const uploadData = explicitData || { formData, images };
 
     if (!currentUser) {
@@ -137,7 +136,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
     }
 
     setIsUploading(true);
-    if (isAfterPayment) setIsAutoUploading(true);
 
     try {
       const sellerName = userData.name || currentUser.email!.split('@')[0] || 'Anonymous';
@@ -194,6 +192,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
       setImageFiles([]);
       localStorage.removeItem('pending_upload');
       localStorage.removeItem('upload_done');
+      pendingUploadRef.current = null;
 
       await checkUploadCount();
       onBack(); // go to previous screen
@@ -204,7 +203,6 @@ export function SellScreen({ onBack }: SellScreenProps) {
       throw err;
     } finally {
       setIsUploading(false);
-      setIsAutoUploading(false);
     }
   };
 
@@ -303,7 +301,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
   };
 
   // ---------------------------------------------
-  // 🔁 AUTO-UPLOAD AFTER PAYMENT (fixed)
+  // 🔁 DETECT PAYMENT SUCCESS AND SHOW MODAL
   // ---------------------------------------------
   useEffect(() => {
     const handlePaymentSuccess = async () => {
@@ -313,28 +311,18 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
       if (paymentStatus !== 'success' || !txRef) return;
 
-      // Prevent duplicate runs
-      if (isAutoUploading || isUploading) return;
+      // Prevent duplicate processing
+      if (showPaymentSuccessModal) return;
 
       const pending = localStorage.getItem('pending_upload');
-      const alreadyUploaded = localStorage.getItem('upload_done');
-
       if (!pending) {
         console.warn('No pending upload found, but payment success detected.');
         return;
       }
 
-      if (alreadyUploaded) {
-        console.log('Upload already done for this session.');
-        return;
-      }
-
       try {
-        // Clear query params from URL without reloading
-        window.history.replaceState({}, document.title, window.location.pathname);
-
         const pendingData: PendingUpload = JSON.parse(pending);
-
+        
         // Optional: verify payment with backend
         const isPaymentVerified = await verifyPayment(pendingData.reference);
         if (!isPaymentVerified) {
@@ -343,28 +331,39 @@ export function SellScreen({ onBack }: SellScreenProps) {
           return;
         }
 
-        // Mark as done to prevent re-running
-        localStorage.setItem('upload_done', 'true');
+        // Store in ref for later use
+        pendingUploadRef.current = pendingData;
 
-        // Perform the upload directly with the restored data – no state delay!
-        await performUpload(true, {
-          formData: pendingData.formData,
-          images: pendingData.images
-        });
+        // Clear query params from URL without reloading
+        window.history.replaceState({}, document.title, window.location.pathname);
 
-        // Clean up storage (performUpload already does this, but double‑check)
-        localStorage.removeItem('pending_upload');
-        localStorage.removeItem('upload_done');
-
+        // Show success modal
+        setShowPaymentSuccessModal(true);
       } catch (err) {
-        console.error('Auto-upload failed:', err);
-        alert('Failed to complete upload after payment. Please try again or contact support.');
-        localStorage.removeItem('upload_done');
+        console.error('Error processing payment success:', err);
+        alert('An error occurred. Please try again or contact support.');
+        localStorage.removeItem('pending_upload');
       }
     };
 
     handlePaymentSuccess();
-  }, [location.search]); // runs whenever the URL query changes
+  }, [location.search]); // runs whenever URL query changes
+
+  // Handle the "OK" button click – perform the upload
+  const handleConfirmUpload = async () => {
+    if (!pendingUploadRef.current) {
+      alert('No pending upload found. Please start over.');
+      setShowPaymentSuccessModal(false);
+      return;
+    }
+
+    // Close modal and start upload
+    setShowPaymentSuccessModal(false);
+    await performUpload(true, {
+      formData: pendingUploadRef.current.formData,
+      images: pendingUploadRef.current.images
+    });
+  };
 
   // Initial load: check upload count and clean stale pending uploads
   useEffect(() => {
@@ -420,10 +419,36 @@ export function SellScreen({ onBack }: SellScreenProps) {
         </div>
       )}
 
-      {/* Show auto-upload in progress */}
-      {isAutoUploading && (
-        <div className="bg-green-50 border-l-4 border-green-400 p-4 m-4 rounded-r-lg">
-          <p className="text-green-800 font-medium">✅ Payment successful! Now uploading your item...</p>
+      {/* Payment Success Modal */}
+      {showPaymentSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <CheckCircle className="w-8 h-8 text-green-500" />
+              <h2 className="text-2xl font-semibold">Payment Successful!</h2>
+            </div>
+            <p className="text-muted-foreground mb-6">
+              Your payment has been received. Click the button below to complete your listing.
+            </p>
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={handleConfirmUpload}
+                disabled={isUploading}
+                className="w-full p-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 font-medium"
+              >
+                {isUploading ? 'Uploading...' : 'OK – Complete Upload'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPaymentSuccessModal(false)}
+                disabled={isUploading}
+                className="w-full p-3 border border-border rounded-lg hover:bg-accent transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -506,12 +531,12 @@ export function SellScreen({ onBack }: SellScreenProps) {
         </div>
 
         {/* Submit button */}
-        <button type="submit" disabled={isUploading || isAutoUploading}
+        <button type="submit" disabled={isUploading}
           className={`w-full p-3 bg-primary text-primary-foreground rounded-lg transition-all mb-4 flex items-center justify-center gap-2 font-medium ${
-            isUploading || isAutoUploading ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'
+            isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'
           }`}>
-          {needsPayment && !isAutoUploading && <CreditCard className="w-5 h-5" />}
-          {isUploading ? 'Uploading...' : isAutoUploading ? 'Completing upload...' : needsPayment ? `Pay MK${UPLOAD_FEE} & List Item` : 'List Item'}
+          {needsPayment && <CreditCard className="w-5 h-5" />}
+          {isUploading ? 'Uploading...' : needsPayment ? `Pay MK${UPLOAD_FEE} & List Item` : 'List Item'}
         </button>
       </form>
 
