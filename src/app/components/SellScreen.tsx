@@ -298,43 +298,46 @@ export function SellScreen({ onBack }: SellScreenProps) {
 
   // Detect payment success and show modal
   useEffect(() => {
-    const handlePaymentSuccess = async () => {
-      const params = new URLSearchParams(location.search);
-      const paymentStatus = params.get('payment');
-      const txRef = params.get('tx_ref');
+  const handlePaymentSuccess = async () => {
+    const params = new URLSearchParams(location.search);
+    const txRef = params.get('tx_ref');
+    const status = params.get('status');            // PayChangu may send this
 
-      if (paymentStatus !== 'success' || !txRef) return;
+    // Accept either our custom 'payment=success' OR PayChangu's 'status=successful'
+    const isSuccess = params.get('payment') === 'success' || 
+                      status === 'successful' || 
+                      status === 'completed';
 
-      if (showPaymentSuccessModal) return;
+    if (!isSuccess || !txRef) return;
+    if (showPaymentSuccessModal) return;
 
-      const pending = localStorage.getItem('pending_upload');
-      if (!pending) {
-        console.warn('No pending upload found, but payment success detected.');
+    const pending = localStorage.getItem('pending_upload');
+    if (!pending) {
+      console.warn('No pending upload found, but payment success detected.');
+      return;
+    }
+
+    try {
+      const pendingData: PendingUpload = JSON.parse(pending);
+      const isPaymentVerified = await verifyPayment(pendingData.reference);
+      if (!isPaymentVerified) {
+        alert('Payment verification failed. Please contact support.');
+        localStorage.removeItem('pending_upload');
         return;
       }
 
-      try {
-        const pendingData: PendingUpload = JSON.parse(pending);
-        
-        const isPaymentVerified = await verifyPayment(pendingData.reference);
-        if (!isPaymentVerified) {
-          alert('Payment verification failed. Please contact support.');
-          localStorage.removeItem('pending_upload');
-          return;
-        }
+      pendingUploadRef.current = pendingData;
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setShowPaymentSuccessModal(true);
+    } catch (err) {
+      console.error('Error processing payment success:', err);
+      alert('An error occurred. Please try again or contact support.');
+      localStorage.removeItem('pending_upload');
+    }
+  };
 
-        pendingUploadRef.current = pendingData;
-        window.history.replaceState({}, document.title, window.location.pathname);
-        setShowPaymentSuccessModal(true);
-      } catch (err) {
-        console.error('Error processing payment success:', err);
-        alert('An error occurred. Please try again or contact support.');
-        localStorage.removeItem('pending_upload');
-      }
-    };
-
-    handlePaymentSuccess();
-  }, [location.search]);
+  handlePaymentSuccess();
+}, [location.search, showPaymentSuccessModal]);
 
   // Handle OK button click – perform the upload
   const handleConfirmUpload = async () => {
@@ -369,7 +372,30 @@ export function SellScreen({ onBack }: SellScreenProps) {
       }
     }
   }, []);
+// ✅ Resume pending upload on mount (if payment was already verified)
+useEffect(() => {
+  const resumePendingUpload = async () => {
+    if (showPaymentSuccessModal || isUploading) return;
 
+    const pending = localStorage.getItem('pending_upload');
+    if (!pending) return;
+
+    try {
+      const pendingData: PendingUpload = JSON.parse(pending);
+      const isPaymentVerified = await verifyPayment(pendingData.reference);
+      if (isPaymentVerified) {
+        pendingUploadRef.current = pendingData;
+        setShowPaymentSuccessModal(true);
+      } else {
+        localStorage.removeItem('pending_upload');
+      }
+    } catch (e) {
+      localStorage.removeItem('pending_upload');
+    }
+  };
+
+  resumePendingUpload();
+}, []); // Run only once when component mounts
   const remainingFreeUploads = Math.max(0, FREE_UPLOADS_LIMIT - uploadCount);
   const needsPayment = uploadCount >= FREE_UPLOADS_LIMIT;
 
