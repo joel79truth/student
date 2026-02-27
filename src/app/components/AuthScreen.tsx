@@ -172,7 +172,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                 <option value="NRC Campus">NRC Campus</option>
                 <option value="Bunda Campus">Bunda Campu</option>
                 <option value="City Campus">City Campus</option>
-                <option value="other Campus">other Campuss</option>
+                <option value="ODL Campus">ODL Campuss</option>
               </select>
             </div>
           </>
