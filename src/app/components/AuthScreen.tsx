@@ -169,10 +169,10 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                 disabled={loading}
               >
                 <option value="">Select your campus</option>
-                <option value="Main Campus">Main Campus</option>
-                <option value="North Campus">North Campus</option>
-                <option value="South Campus">South Campus</option>
-                <option value="Downtown Campus">Downtown Campus</option>
+                <option value="NRC Campus">NRC Campus</option>
+                <option value="Bunda Campus">Bunda Campu</option>
+                <option value="City Campus">City Campus</option>
+                <option value="other Campus">other Campuss</option>
               </select>
             </div>
           </>
