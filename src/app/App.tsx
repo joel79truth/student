@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Home, MessageCircle, PlusCircle, User } from "lucide-react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
-import { requestNotificationPermission, removeTokenFromFirestore } from "../lib/notifications";
 
 // Screens
 import { SplashScreen } from "../app/components/SplashScreen";
@@ -31,7 +30,7 @@ export default function App() {
     }
   }, []);
 
-  // ✅ Firebase auth listener + request notification permission
+  // ✅ Firebase auth listener (notifications removed)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setAuthLoading(false);
@@ -41,12 +40,7 @@ export default function App() {
         setCurrentScreen((prev) =>
           prev === "splash" || prev === "auth" ? "home" : prev
         );
-
-        try {
-          await requestNotificationPermission(user.uid);
-        } catch (error) {
-          console.error("Failed to set up notifications:", error);
-        }
+        // Notification setup removed
       } else {
         setIsAuthenticated(false);
         setCurrentScreen("auth");
@@ -58,7 +52,6 @@ export default function App() {
 
   // ✅ Global redirect to sell screen if a pending upload exists
   useEffect(() => {
-    // Wait for auth to be determined
     if (authLoading) return;
 
     const pending = localStorage.getItem("pending_upload");
@@ -71,7 +64,6 @@ export default function App() {
       if (isRecent && isAuthenticated && currentScreen !== "sell") {
         setCurrentScreen("sell");
       } else if (!isRecent) {
-        // Remove stale pending upload
         localStorage.removeItem("pending_upload");
       }
     } catch (e) {
@@ -109,11 +101,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      // Remove FCM token and clear pending upload
-      if (auth.currentUser) {
-        await removeTokenFromFirestore(auth.currentUser.uid);
-      }
-      localStorage.removeItem("pending_upload"); // ← clear pending upload on logout
+      localStorage.removeItem("pending_upload"); // Clear any pending upload
       await signOut(auth);
       setIsAuthenticated(false);
       setCurrentScreen("auth");
