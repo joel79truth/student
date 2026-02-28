@@ -155,7 +155,7 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         </div>
 
         <div className="p-4">
-          <div className="text-3xl mb-2">${product.price}</div>
+          <div className="text-3xl mb-2">Mk{product.price}</div>
           <h1 className="text-xl mb-4">{product.title}</h1>
 
           <div className="space-y-3 mb-6">
