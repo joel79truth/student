@@ -2,6 +2,12 @@
   <!DOCTYPE html>
   <html lang="en">
     <head>
+      <!-- Link to the manifest -->
+<link rel="manifest" href="/manifest.json">
+
+<!-- iOS specific meta tags (optional but recommended) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>Student Marketplace App Development</title>
@@ -10,6 +16,15 @@
     <body>
       <div id="root"></div>
       <script type="module" src="/src/main.tsx"></script>
+      <script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('Service Worker registered', reg))
+        .catch(err => console.log('Service Worker registration failed', err));
+    });
+  }
+</script>
     </body>
   </html>
   
