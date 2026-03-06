@@ -1,11 +1,6 @@
 {
-  "name": "student-marketplace-app",
-  "short_name": "S M P ",
-  "description": "A short description of your app",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "short_name": "Pa Nsika",
+  "name": "Student Marketplace",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
@@ -17,5 +12,9 @@
       "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
 }
