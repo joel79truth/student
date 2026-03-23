@@ -233,10 +233,10 @@ useEffect(() => {
       <div className="bg-card border-b border-border p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h1 className="text-2xl">Pa Nsika</h1>
+            <h1 className="text-2xl">S M P</h1>
             <div className="flex items-center text-sm text-muted-foreground mt-1">
               <MapPin className="w-4 h-4 mr-1" />
-              <span>Main Campus</span>
+              <span>YourCampus MARKET</span>
             </div>
           </div>
           <button className="p-2 hover:bg-accent rounded-lg">
