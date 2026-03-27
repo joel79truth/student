@@ -11,46 +11,76 @@ import { SellScreen } from "../app/components/SellScreen";
 import { ChatScreen } from "../app/components/ChatScreen";
 import { ProfileScreen } from "../app/components/ProfileScreen";
 import { JSX } from "react/jsx-runtime";
+import { useAuth } from "../context/AuthContext";
 
 type Screen = "splash" | "auth" | "home" | "sell" | "chat" | "profile";
 
 export default function App() {
+  const { setUser } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<Screen>("splash");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // ✅ Handle PayChangu redirect from URL parameters
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const payment = params.get("payment");
+  // ❌ REMOVED: Old payment redirect that set screen to "sell"
+  // useEffect(() => {
+  //   const params = new URLSearchParams(window.location.search);
+  //   const payment = params.get("payment");
+  //   if (payment === "success") {
+  //     setCurrentScreen("sell");
+  //     window.history.replaceState({}, document.title, window.location.pathname);
+  //   }
+  // }, []);
 
-    if (payment === "success") {
-      setCurrentScreen("sell");
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, []);
-
-  // ✅ Firebase auth listener (notifications removed)
+  // Firebase auth listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setAuthLoading(false);
 
-      if (user) {
+      if (firebaseUser) {
         setIsAuthenticated(true);
+        setUser({
+          id: firebaseUser.uid,
+          email: firebaseUser.email || "",
+          firstName: firebaseUser.displayName?.split(" ")[0] || "User",
+          lastName: firebaseUser.displayName?.split(" ")[1] || "",
+          name: undefined
+        });
         setCurrentScreen((prev) =>
           prev === "splash" || prev === "auth" ? "home" : prev
         );
-        // Notification setup removed
       } else {
         setIsAuthenticated(false);
+        setUser(null);
         setCurrentScreen("auth");
       }
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [setUser]);
+useEffect(() => {
+  if (authLoading) return;
 
-  // ✅ Global redirect to sell screen if a pending upload exists
+  const params = new URLSearchParams(window.location.search);
+
+  const success = params.get("payment_success");
+  const cancelled = params.get("payment_cancelled");
+
+  if (success === "true" && isAuthenticated) {
+    console.log("✅ Payment successful");
+
+    setCurrentScreen("home"); // or "sell" if you want
+
+    // clean URL (important)
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  if (cancelled === "true") {
+    console.log("❌ Payment cancelled");
+
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+}, [authLoading, isAuthenticated]);
+  // Global redirect to sell screen if a pending upload exists
   useEffect(() => {
     if (authLoading) return;
 
@@ -71,7 +101,7 @@ export default function App() {
     }
   }, [authLoading, isAuthenticated, currentScreen]);
 
-  // ✅ Splash screen timer
+  // Splash screen timer
   useEffect(() => {
     if (authLoading) return;
 
@@ -84,7 +114,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [authLoading, isAuthenticated, currentScreen]);
 
-  // ✅ External chat navigation listener
+  // External chat navigation listener
   useEffect(() => {
     const handleNavigateToChat = () => {
       setCurrentScreen("chat");
@@ -101,7 +131,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      localStorage.removeItem("pending_upload"); // Clear any pending upload
+      localStorage.removeItem("pending_upload");
       await signOut(auth);
       setIsAuthenticated(false);
       setCurrentScreen("auth");

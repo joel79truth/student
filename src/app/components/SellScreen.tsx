@@ -110,6 +110,7 @@ export function SellScreen({ onBack }: SellScreenProps) {
         uid: currentUser.uid,
         email: currentUser.email!,
         name: currentUser.displayName || currentUser.email!.split('@')[0],
+        sellerId: currentUser.uid,
       });
       if (!userData) {
         alert('Could not create user profile. Please try again.');

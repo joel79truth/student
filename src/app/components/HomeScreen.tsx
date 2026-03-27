@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Filter, MapPin, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom'; // 👈 add this import
 import { ProductCard } from '../../app/components/ProductCard';
 import { ProductDetail } from '../../app/components/ProductDetail';
 import { supabase } from '../../lib/supabase';
@@ -8,8 +9,8 @@ interface Product {
   id: string;
   title: string;
   price: number;
-  images: string[];          // full array for detail view
-  image: string;             // first image for card view
+  images: string[];
+  image: string;
   seller: string;
   sellerEmail: string;
   campus: string;
@@ -25,16 +26,16 @@ export function HomeScreen() {
   const [savedItems, setSavedItems] = useState<string[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [navigateToChat, setNavigateToChat] = useState(false);
+  const [showPaymentSuccess, setShowPaymentSuccess] = useState(false); // 👈 new state
 
   // PWA install prompt state
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallPopup, setShowInstallPopup] = useState(false);
-
-  // iOS detection
   const [isIOS, setIsIOS] = useState(false);
-
-  // Ref to prevent multiple timers
   const iosTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // 👇 useSearchParams to read URL query
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const categories = ['All', 'Electronics', 'Food', 'Books', 'clothes'];
 
@@ -56,20 +57,11 @@ export function HomeScreen() {
     if (!isIOS) return;
 
     const checkInstalledAndShow = () => {
-      // Don't show if already in standalone mode
-      if (window.matchMedia('(display-mode: standalone)').matches) {
-        console.log('iOS app already installed (standalone)');
-        return;
-      }
+      if (window.matchMedia('(display-mode: standalone)').matches) return;
 
-      // Respect dismissal flag
       const lastDismiss = localStorage.getItem('installDismissed');
-      if (lastDismiss && Date.now() - Number(lastDismiss) < 7 * 24 * 60 * 60 * 1000) {
-        console.log('iOS popup dismissed recently, not showing');
-        return;
-      }
+      if (lastDismiss && Date.now() - Number(lastDismiss) < 7 * 24 * 60 * 60 * 1000) return;
 
-      // Show the popup after a short delay (e.g., 2 seconds)
       iosTimerRef.current = setTimeout(() => {
         setShowInstallPopup(true);
       }, 2000);
@@ -87,16 +79,10 @@ export function HomeScreen() {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
 
-      // Check if user dismissed recently
       const lastDismiss = localStorage.getItem('installDismissed');
-      if (lastDismiss && Date.now() - Number(lastDismiss) < 7 * 24 * 60 * 60 * 1000) {
-        console.log('Install popup dismissed recently, ignoring beforeinstallprompt');
-        return;
-      }
+      if (lastDismiss && Date.now() - Number(lastDismiss) < 7 * 24 * 60 * 60 * 1000) return;
 
-      // Only show if not already installed
       if (!window.matchMedia('(display-mode: standalone)').matches) {
-        console.log('beforeinstallprompt fired, showing popup');
         setDeferredPrompt(e);
         setShowInstallPopup(true);
       }
@@ -129,14 +115,10 @@ export function HomeScreen() {
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
 
-    // Show the native install prompt
     deferredPrompt.prompt();
-
-    // Wait for the user's choice
     const { outcome } = await deferredPrompt.userChoice;
     console.log(`User response to install prompt: ${outcome}`);
 
-    // Clear the stored prompt
     setDeferredPrompt(null);
     setShowInstallPopup(false);
   };
@@ -144,49 +126,66 @@ export function HomeScreen() {
   // Dismiss handler (user clicks "Not now")
   const handleDismiss = () => {
     setShowInstallPopup(false);
-    // Remember that user dismissed (optional, to avoid showing too often)
     localStorage.setItem('installDismissed', Date.now().toString());
   };
 
-  // Fetch products from Supabase
- // Inside HomeScreen.tsx, replace the fetchProducts useEffect with:
+  // 👇 Check for payment success on mount and when URL changes
+  useEffect(() => {
+    const paymentSuccess = searchParams.get('payment_success');
+    if (paymentSuccess === 'true') {
+      setShowPaymentSuccess(true);
+      // Remove the query parameter from the URL
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('payment_success');
+      setSearchParams(newParams, { replace: true });
 
-useEffect(() => {
-  const fetchProducts = async () => {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .order('created_at', { ascending: false }); // 👈 newest first
+      // Automatically hide the message after 5 seconds
+      const timer = setTimeout(() => {
+        setShowPaymentSuccess(false);
+      }, 5000);
 
-    if (error) {
-      console.error('Error fetching products:', error.message);
-      return;
+      return () => clearTimeout(timer);
     }
+  }, [searchParams, setSearchParams]);
 
-    const productsWithImages: Product[] = (data || []).map((item: any) => {
-      const imagesArray = Array.isArray(item.images) ? item.images : [];
-      const firstImage = imagesArray.length > 0 ? imagesArray[0] : '';
+  // Fetch products from Supabase
+  useEffect(() => {
+    const fetchProducts = async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      return {
-        id: item.id.toString(),
-        title: item.title || 'Untitled Product',
-        price: item.price || 0,
-        images: imagesArray,
-        image: firstImage,
-        seller: item.seller || 'Unknown',
-        sellerEmail: item.sellerEmail || '',
-        campus: item.campus || 'Main Campus',
-        distance: item.distance || '0.5 mi',
-        condition: item.condition || 'Good',
-        category: item.category || 'Other',
-      };
-    });
+      if (error) {
+        console.error('Error fetching products:', error.message);
+        return;
+      }
 
-    setProducts(productsWithImages);
-  };
+      const productsWithImages: Product[] = (data || []).map((item: any) => {
+        const imagesArray = Array.isArray(item.images) ? item.images : [];
+        const firstImage = imagesArray.length > 0 ? imagesArray[0] : '';
 
-  fetchProducts();
-}, []);
+        return {
+          id: item.id.toString(),
+          title: item.title || 'Untitled Product',
+          price: item.price || 0,
+          images: imagesArray,
+          image: firstImage,
+          seller: item.seller || 'Unknown',
+          sellerEmail: item.sellerEmail || '',
+          campus: item.campus || 'Main Campus',
+          distance: item.distance || '0.5 mi',
+          condition: item.condition || 'Good',
+          category: item.category || 'Other',
+        };
+      });
+
+      setProducts(productsWithImages);
+    };
+
+    fetchProducts();
+  }, []);
+
   // Toggle saved items
   const toggleSave = (productId: string) => {
     const newSaved = savedItems.includes(productId)
@@ -217,7 +216,7 @@ useEffect(() => {
   if (selectedProduct) {
     return (
       <ProductDetail
-        product={selectedProduct}       // now includes full images array
+        product={selectedProduct}
         isSaved={savedItems.includes(selectedProduct.id)}
         onToggleSave={() => toggleSave(selectedProduct.id)}
         onBack={() => setSelectedProduct(null)}
@@ -226,7 +225,7 @@ useEffect(() => {
     );
   }
 
-  // Main marketplace view (unchanged)
+  // Main marketplace view
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden relative">
       {/* Header */}
@@ -236,7 +235,7 @@ useEffect(() => {
             <h1 className="text-2xl">S M P</h1>
             <div className="flex items-center text-sm text-muted-foreground mt-1">
               <MapPin className="w-4 h-4 mr-1" />
-              <span>YourCampus MARKET</span>
+              <span>Your Campus MARKET</span>
             </div>
           </div>
           <button className="p-2 hover:bg-accent rounded-lg">
@@ -272,13 +271,22 @@ useEffect(() => {
         </div>
       </div>
 
+      {/* Success Message Banner */}
+      {showPaymentSuccess && (
+        <div className="mx-4 mt-4 p-3 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg shadow-sm animate-slide-up">
+          <p className="text-green-800 dark:text-green-200 text-center font-medium">
+            ✅ Payment successful! Thank you for your purchase.
+          </p>
+        </div>
+      )}
+
       {/* Product Grid */}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="grid grid-cols-2 gap-3">
           {filteredProducts.map(product => (
             <ProductCard
               key={product.id}
-              product={product}          // ProductCard only uses product.image
+              product={product}
               isSaved={savedItems.includes(product.id)}
               onToggleSave={() => toggleSave(product.id)}
               onClick={() => setSelectedProduct(product)}
@@ -317,7 +325,6 @@ useEffect(() => {
 
           <div className="flex gap-2 mt-3">
             {isIOS ? (
-              // iOS instructions – no install button, just a helpful hint
               <div className="flex-1 text-center text-sm text-muted-foreground bg-secondary/50 py-2 rounded-lg">
                 Tap <span className="font-semibold">Share</span> →{' '}
                 <span className="font-semibold">Add to Home Screen</span>

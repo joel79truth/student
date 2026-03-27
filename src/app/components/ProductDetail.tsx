@@ -1,4 +1,4 @@
-import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package, Loader2 } from 'lucide-react';
+import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package, Loader2, ShoppingCart } from 'lucide-react';
 import { ImageWithFallback } from '../../app/components/figma/ImageWithFallback';
 import { getOrCreateChat, normalizeUserId } from '../../lib/chatService';
 import { getCurrentUserData, getUserByUsername, createOrUpdateUser, getUserByEmail } from '../../lib/userService';
@@ -28,6 +28,10 @@ interface ProductDetailProps {
 
 export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatStart }: ProductDetailProps) {
   const [loading, setLoading] = useState(false);
+
+  const handleBuyNow = () => {
+    alert('This feature is coming soon! 🚀\n\nWe\'re working on adding secure payment options. For now, please chat with the seller to arrange payment.');
+  };
 
   const handleChatWithSeller = async () => {
     setLoading(true);
@@ -199,11 +203,18 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
       </div>
 
       {/* Bottom Action */}
-      <div className="bg-card border-t border-border p-4">
+      <div className="bg-card border-t border-border p-4 space-y-3">
+        <button
+          onClick={handleBuyNow}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity"
+        >
+          <ShoppingCart className="w-5 h-5" />
+          <span>Buy Now</span>
+        </button>
         <button
           onClick={handleChatWithSeller}
           disabled={loading}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-2 py-3 bg-secondary text-secondary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? (
             <>

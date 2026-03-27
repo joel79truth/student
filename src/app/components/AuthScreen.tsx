@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ShoppingBag, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ShoppingBag, Loader2, Download } from 'lucide-react';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword,
@@ -23,6 +23,43 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     campus: '',
     password: ''
   });
+
+  // PWA install state
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [installable, setInstallable] = useState(false);
+
+  // Listen for the beforeinstallprompt event
+  useEffect(() => {
+    const handler = (e: Event) => {
+      // Prevent Chrome 67 and earlier from automatically showing the prompt
+      e.preventDefault();
+      // Stash the event so it can be triggered later
+      setDeferredPrompt(e);
+      setInstallable(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handler);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+    };
+  }, []);
+
+  // Handle install button click
+  const handleInstall = async () => {
+    if (!deferredPrompt) return;
+
+    // Show the install prompt
+    deferredPrompt.prompt();
+
+    // Wait for the user to respond to the prompt
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log(`User response to the install prompt: ${outcome}`);
+
+    // Clear the deferredPrompt and installable state
+    setDeferredPrompt(null);
+    setInstallable(false);
+  };
 
   const getErrorMessage = (error: AuthError) => {
     switch (error.code) {
@@ -227,6 +264,19 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         <p className="text-xs text-muted-foreground mt-6 text-center">
           By signing up, you agree to verify your student status via email verification
         </p>
+      )}
+
+      {/* Install button at the bottom */}
+      {installable && (
+        <div className="mt-auto pt-6">
+          <button
+            onClick={handleInstall}
+            className="w-full p-3 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors flex items-center justify-center gap-2"
+          >
+            <Download className="w-5 h-5" />
+            Install App
+          </button>
+        </div>
       )}
     </div>
   );
