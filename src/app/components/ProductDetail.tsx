@@ -1,7 +1,7 @@
-import { ArrowLeft, Heart, MessageCircle, MapPin, User, Package, Loader2, ShoppingCart } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Heart, MessageCircle, MapPin, User, Package, Loader2, ShoppingCart } from 'lucide-react';
 import { ImageWithFallback } from '../../app/components/figma/ImageWithFallback';
 import { getOrCreateChat, normalizeUserId } from '../../lib/chatService';
-import { getCurrentUserData, getUserByUsername, createOrUpdateUser, getUserByEmail } from '../../lib/userService';
+import { getCurrentUserData, getUserByUsername, createOrUpdateUser } from '../../lib/userService'; // removed getUserByEmail
 import { auth } from '../../lib/firebase';
 import { useState } from 'react';
 
@@ -9,15 +9,16 @@ interface Product {
   id: string;
   title: string;
   price: number;
-  image: string;
-  seller: string;          // display name (optional)
-  sellerEmail: string;      // ✅ add this – the seller's email
-      // you may keep this if needed
+  image?: string;           // fallback single image
+  images?: string[];        // ✅ multiple images from same user
+  seller: string;
+  sellerEmail: string;
   campus: string;
   distance: string;
   condition: string;
   category: string;
 }
+
 interface ProductDetailProps {
   product: Product;
   isSaved: boolean;
@@ -28,6 +29,22 @@ interface ProductDetailProps {
 
 export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatStart }: ProductDetailProps) {
   const [loading, setLoading] = useState(false);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+
+  // Normalize images: use product.images if available, else fallback to single product.image
+  const images = product.images && product.images.length > 0
+    ? product.images
+    : product.image
+      ? [product.image]
+      : [];
+
+  const handlePrevImage = () => {
+    setCurrentImageIndex((prev) => (prev === 0 ? images.length - 1 : prev - 1));
+  };
+
+  const handleNextImage = () => {
+    setCurrentImageIndex((prev) => (prev === images.length - 1 ? 0 : prev + 1));
+  };
 
   const handleBuyNow = () => {
     alert('This feature is coming soon! 🚀\n\nWe\'re working on adding secure payment options. For now, please chat with the seller to arrange payment.');
@@ -42,7 +59,6 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         return;
       }
 
-      // Get current user data, with fallback creation if missing
       let userData = await getCurrentUserData(currentUser);
       if (!userData) {
         console.log('User data not found, creating on the fly...');
@@ -57,40 +73,31 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         }
       }
 
-      // --- Normalize current user ID to email ---
       const rawCurrentId = currentUser.email || currentUser.uid;
       const normalizedCurrent = await normalizeUserId(rawCurrentId);
-      const currentUserId = normalizedCurrent.id; // should be email
+      const currentUserId = normalizedCurrent.id;
       const currentUserName = userData.name || normalizedCurrent.name;
 
-      // --- Resolve seller's email (no guessing!) ---
       let sellerEmail: string | null = null;
       const sellerName = product.seller;
 
-      // 1. Direct sellerEmail (most reliable)
       if (product.sellerEmail) {
         sellerEmail = product.sellerEmail;
         console.log('✅ Using product.sellerEmail:', sellerEmail);
       }
 
-      
-
-      // 3. Try looking up by seller display name (product.seller)
       if (!sellerEmail && product.seller) {
         console.log('🔍 Looking up seller by display name:', product.seller);
         if (product.seller.includes('@')) {
           sellerEmail = product.seller;
           console.log('✅ seller name is an email:', sellerEmail);
         } else {
-          const trimmedSeller = product.seller.trim(); // 👈 trim to avoid spaces
+          const trimmedSeller = product.seller.trim();
           const sellerData = await getUserByUsername(trimmedSeller);
           sellerEmail = sellerData?.email || null;
           if (sellerEmail) console.log('✅ Found seller via display name lookup:', sellerEmail);
         }
       }
-
-      // 4. Final fallback: try to construct email from common domains
-   
 
       if (!sellerEmail) {
         console.error('❌ Could not resolve seller email for:', { seller: product.seller, sellerId: product.seller });
@@ -98,7 +105,6 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         return;
       }
 
-      // 🛡️ Prevent self-chat
       if (sellerEmail === currentUserId) {
         alert('You cannot start a chat with yourself.');
         return;
@@ -120,11 +126,10 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         sellerName,
         product.id,
         product.title,
-        product.image
+        images[0] || '' // use first image as thumbnail
       );
 
       console.log('✅ Chat created/found:', chatId);
-
       if (onChatStart) onChatStart();
     } catch (error) {
       console.error('❌ Error starting chat:', error);
@@ -133,6 +138,25 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
       setLoading(false);
     }
   };
+
+  // If no images at all, show placeholder
+  if (images.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col bg-background overflow-hidden">
+        <div className="bg-card border-b border-border p-4 flex items-center justify-between">
+          <button onClick={onBack} className="p-2 hover:bg-accent rounded-lg -ml-2">
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+          <button onClick={onToggleSave} className="p-2 hover:bg-accent rounded-lg">
+            <Heart className={`w-6 h-6 ${isSaved ? 'fill-red-500 text-red-500' : 'text-foreground'}`} />
+          </button>
+        </div>
+        <div className="flex-1 flex items-center justify-center text-muted-foreground">
+          No images available
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
@@ -150,14 +174,59 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="relative aspect-square">
+        {/* Image Carousel */}
+        <div className="relative aspect-square bg-muted">
           <ImageWithFallback
-            src={product.image}
-            alt={product.title}
+            src={images[currentImageIndex]}
+            alt={`${product.title} - image ${currentImageIndex + 1}`}
             className="w-full h-full object-cover"
           />
+
+          {images.length > 1 && (
+            <>
+              <button
+                onClick={handlePrevImage}
+                className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition"
+                aria-label="Previous image"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleNextImage}
+                className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition"
+                aria-label="Next image"
+              >
+                <ArrowRight className="w-5 h-5" />
+              </button>
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-1 rounded-full">
+                {currentImageIndex + 1} / {images.length}
+              </div>
+            </>
+          )}
         </div>
 
+        {/* Thumbnails (only if multiple images) */}
+        {images.length > 1 && (
+          <div className="flex gap-2 p-2 overflow-x-auto">
+            {images.map((img, idx) => (
+              <button
+                key={idx}
+                onClick={() => setCurrentImageIndex(idx)}
+                className={`flex-shrink-0 w-16 h-16 rounded-md overflow-hidden border-2 ${
+                  idx === currentImageIndex ? 'border-primary' : 'border-transparent'
+                }`}
+              >
+                <ImageWithFallback
+                  src={img}
+                  alt={`Thumbnail ${idx + 1}`}
+                  className="w-full h-full object-cover"
+                />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Product details (unchanged) */}
         <div className="p-4">
           <div className="text-3xl mb-2">Mk{product.price}</div>
           <h1 className="text-xl mb-4">{product.title}</h1>
@@ -191,7 +260,7 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
           <div className="mb-6">
             <h3 className="mb-2">Description</h3>
             <p className="text-muted-foreground">
-              This {product.title.toLowerCase()} is in {product.condition.toLowerCase()} condition and ready for pickup. 
+              This {product.title.toLowerCase()} is in {product.condition.toLowerCase()} condition and ready for pickup.
               Located at {product.campus}. Contact seller for more details or to arrange a meetup.
             </p>
           </div>
@@ -202,7 +271,7 @@ export function ProductDetail({ product, isSaved, onToggleSave, onBack, onChatSt
         </div>
       </div>
 
-      {/* Bottom Action */}
+      {/* Bottom Action Buttons */}
       <div className="bg-card border-t border-border p-4 space-y-3">
         <button
           onClick={handleBuyNow}
